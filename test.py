@@ -21,7 +21,7 @@ def print_ascii_art():
     ║   Welcome to the Code Universe!   ║
     ╚═══════════════════════════════════╝
         """,
-        """
+        r"""
          _   _      _ _         __        __         _     _ _
         | | | | ___| | | ___    \ \      / /__  _ __| | __| | |
         | |_| |/ _ \ | |/ _ \    \ \ /\ / / _ \| '__| |/ _` | |
@@ -29,14 +29,14 @@ def print_ascii_art():
         |_| |_|\___|_|_|\___/      \_/\_/ \___/|_|  |_|\__,_(_)
 
         """,
-        """
+        r"""
     ░█████╗░░█████╗░██████╗░███████╗  ██╗░░░░░██╗███████╗███████╗
     ██╔══██╗██╔══██╗██╔══██╗██╔════╝  ██║░░░░░██║██╔════╝██╔════╝
     ██║░░╚═╝██║░░██║██║░░██║█████╗░░  ██║░░░░░██║█████╗░░█████╗░░
     ██║░░██╗██║░░██║██║░░██║██╔══╝░░  ██║░░░░░██║██╔══╝░░██╔══╝░░
     ╚█████╔╝╚█████╔╝██████╔╝███████╗  ███████╗██║██║░░░░░███████╗
     ░╚════╝░░╚════╝░╚═════╝░╚══════╝  ╚══════╝╚═╝╚═╝░░░░░╚══════╝
-        """
+        """,
     ]
     return random.choice(art_options)
 
@@ -44,25 +44,26 @@ def print_ascii_art():
 def animate_text(text, delay=0.05):
     """Type out text with animation effect"""
     for char in text:
-        print(char, end='', flush=True)
+        print(char, end="", flush=True)
         time.sleep(delay)
     print()
 
 
 def loading_animation():
     """Fun loading animation"""
-    frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+    frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
     for i in range(20):
-        print(f'\rLoading awesome content {
-              frames[i % len(frames)]}', end='', flush=True)
+        print(
+            f"\rLoading awesome content {frames[i % len(frames)]}", end="", flush=True
+        )
         time.sleep(0.1)
-    print('\r' + ' ' * 30 + '\r', end='')
+    print("\r" + " " * 30 + "\r", end="")
 
 
 def main():
     try:
         # Clear screen effect
-        print('\n' * 3)
+        print("\n" * 3)
 
         # Fun loading animation
         loading_animation()
@@ -76,7 +77,7 @@ def main():
             "✨ Where magic meets logic! ✨",
             "🌟 Code like the star you are! 🌟",
             "💻 Hello from the digital realm! 🌐",
-            "🎉 Welcome to the fun zone! 🎊"
+            "🎉 Welcome to the fun zone! 🎊",
         ]
 
         selected_message = random.choice(messages)
@@ -84,16 +85,16 @@ def main():
 
         # Fun interactive element
         time.sleep(1)
-        print("\n" + "="*50)
+        print("\n" + "=" * 50)
         animate_text("🎮 Interactive Mode Activated! 🎮")
-        print("="*50)
+        print("=" * 50)
 
         # Random fun facts about coding
         fun_facts = [
             "💡 Fun Fact: The first computer bug was an actual bug (moth) found in 1947!",
             "💡 Fun Fact: Python is named after Monty Python's Flying Circus!",
             "💡 Fun Fact: The first programmer was Ada Lovelace in 1843!",
-            "💡 Fun Fact: 'Hello, World!' was first used in 1972!"
+            "💡 Fun Fact: 'Hello, World!' was first used in 1972!",
         ]
 
         time.sleep(1)
@@ -113,14 +114,19 @@ def main():
             time.sleep(3)
             counter += 1
             if counter % 5 == 0:
-                emoji_sequence = ['🌟', '✨', '💫', '⭐', '🌠']
-                print(f"\n{random.choice(emoji_sequence)} Still here? You're awesome! Keep coding! {
-                      random.choice(emoji_sequence)}")
+                emoji_sequence = ["🌟", "✨", "💫", "⭐", "🌠"]
+                print(
+                    f"\n{
+                        random.choice(emoji_sequence)
+                    } Still here? You're awesome! Keep coding! {
+                        random.choice(emoji_sequence)
+                    }"
+                )
 
     except KeyboardInterrupt:
-        print("\n\n" + "="*40)
+        print("\n\n" + "=" * 40)
         animate_text("👋 Thanks for visiting! Keep coding! 🚀")
-        print("="*40)
+        print("=" * 40)
         print("\n🌟 See you in the code universe! 🌟\n")
         sys.exit(0)
 

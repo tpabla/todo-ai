@@ -7,7 +7,53 @@ M.api_url = 'https://api.anthropic.com/v1/messages'
 M.default_model = 'claude-3-5-sonnet-20241022' -- Latest Claude 3.5 Sonnet
 
 function M.build_prompt(instruction, context)
-  return string.format([[
+  -- Parse context if it's JSON
+  local context_obj = nil
+  local ok, parsed = pcall(vim.fn.json_decode, context)
+  if ok then
+    context_obj = parsed
+  end
+
+  -- Build appropriate prompt based on context
+  if context_obj and context_obj.selected_text then
+    -- Visual selection mode
+    return string.format([[
+You are working on a file with the following content:
+
+File: %s
+Language: %s
+
+Full file content:
+%s
+
+The user has selected the following code (lines %d-%d):
+```
+%s
+```
+
+Task: %s
+
+Respond with ONLY valid JSON:
+{
+  "code": "complete replacement code for the selected lines",
+  "explanation": "what changed and why"
+}
+
+Important:
+- The "code" field should contain ONLY the replacement for the selected lines, not the entire file
+- Include the COMPLETE replacement code
+- Maintain the same indentation as the original
+- Escape quotes properly for valid JSON]],
+      context_obj.file_path or 'unknown',
+      context_obj.language or 'unknown',
+      context_obj.file_content or '',
+      context_obj.line_number or 0,
+      context_obj.end_line or context_obj.line_number or 0,
+      context_obj.selected_text or '',
+      instruction)
+  else
+    -- Regular TODO mode
+    return string.format([[
 Task: %s
 
 Context:
@@ -20,6 +66,7 @@ Respond with ONLY valid JSON:
 }
 
 Important: Include the COMPLETE code in the "code" field. Escape quotes properly for valid JSON.]], instruction, context)
+  end
 end
 
 function M.complete(instruction, context, opts)

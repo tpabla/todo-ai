@@ -14,6 +14,8 @@ command! TodoAIAccept lua require('todo-ai').accept_change()
 command! TodoAIReject lua require('todo-ai').reject_change()
 command! TodoAIChat lua require('todo-ai').open_chat()
 command! TodoAIConfig lua require('todo-ai').open_config()
+command! -range TodoAIVisual lua require('todo-ai.visual').process_visual_selection()
+command! -range TodoAIInteractive lua require('todo-ai.visual').process_visual_selection()
 
 " Edit queue commands
 command! TodoAIEditAccept lua require('todo-ai.chat').accept_current_edit()
@@ -25,6 +27,9 @@ nnoremap <silent> <leader>ts :TodoAIScan<CR>
 nnoremap <silent> <leader>ta :TodoAIAccept<CR>
 nnoremap <silent> <leader>tr :TodoAIReject<CR>
 nnoremap <silent> <leader>tc :TodoAIChat<CR>
+
+" Visual mode keybinding for interactive TODO
+vnoremap <silent> <leader>ti :'<,'>TodoAIVisual<CR>
 
 " Edit queue keymaps
 nnoremap <silent> <leader>ea :TodoAIEditAccept<CR>

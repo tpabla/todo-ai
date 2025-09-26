@@ -126,6 +126,9 @@ function M.process_visual_selection()
     return
   end
 
+  -- Store the original buffer before opening input window
+  local original_bufnr = vim.api.nvim_get_current_buf()
+
   -- Create floating input window
   M.create_input_window(function(instruction)
     -- Create a virtual TODO comment at the selection
@@ -141,7 +144,8 @@ function M.process_visual_selection()
       line = start_line,
       end_line = end_line,
       selected_text = selected_text,
-      is_visual = true
+      is_visual = true,
+      bufnr = original_bufnr  -- Store the original buffer
     }
 
     -- Store in state
@@ -156,13 +160,13 @@ function M.process_visual_selection()
     local model = config.get('model')
     chat.show_thinking(model)
 
-    -- Gather context
-    local bufnr = vim.api.nvim_get_current_buf()
-    local context = init.gather_context(bufnr, todo)
+    -- Gather context from the original buffer
+    local context = init.gather_context(original_bufnr, todo)
 
-    -- Add selected text to context
+    -- Add selected text and range to context
     context.selected_text = selected_text
     context.instruction = instruction
+    context.end_line = end_line  -- Add end line for the range
 
     -- Get provider and process
     local providers = require('todo-ai.providers')
@@ -198,7 +202,7 @@ function M.process_visual_selection()
         local diff = require('todo-ai.diff')
 
         -- For visual selection, we replace the selected lines
-        diff.show_visual(bufnr, start_line, end_line, response.code, response.explanation)
+        diff.show_visual(original_bufnr, start_line, end_line, response.code, response.explanation)
         init.state.pending_diff = response
         init.state.pending_diff.is_visual = true
         init.state.pending_diff.start_line = start_line
@@ -206,7 +210,7 @@ function M.process_visual_selection()
       end
 
       -- Store the target buffer filetype for proper formatting
-      response.target_filetype = vim.bo[bufnr].filetype
+      response.target_filetype = vim.bo[original_bufnr].filetype
 
       -- Add formatted response to chat
       local formatted = init.format_response(response)
