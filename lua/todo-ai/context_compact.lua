@@ -244,6 +244,62 @@ function M.get_dependency_summary()
 end
 
 -- Generate full context with human section
+-- Get DRY (Don't Repeat Yourself) hints - reusable functions
+function M.get_dry_hints()
+  local hints = {}
+
+  -- Common utility functions that should be reused
+  table.insert(hints, "## REUSABLE FUNCTIONS (DRY)")
+  table.insert(hints, "")
+  table.insert(hints, "### Validation & Sanitization")
+  table.insert(hints, "- `todo-ai.utils.validate_buffer(bufnr)` - Validate buffer exists and is valid")
+  table.insert(hints, "- `todo-ai.utils.validate_json(str)` - Safe JSON parsing with error handling")
+  table.insert(hints, "- `todo-ai.utils.sanitize_path(path)` - Clean and validate file paths")
+  table.insert(hints, "- `todo-ai.llm_validator.*` - All LLM response validation functions")
+  table.insert(hints, "- `todo-ai.secure_exec.validate_*` - Security validation functions")
+  table.insert(hints, "")
+
+  table.insert(hints, "### Async Operations")
+  table.insert(hints, "- `todo-ai.async_manager.with_lock(resource, fn)` - Thread-safe operations")
+  table.insert(hints, "- `todo-ai.async_manager.rate_limited_request()` - API rate limiting")
+  table.insert(hints, "- `todo-ai.async_manager.debounce/throttle()` - Event handling")
+  table.insert(hints, "")
+
+  table.insert(hints, "### Configuration")
+  table.insert(hints, "- `todo-ai.config_manager.get(key)` - Get config values")
+  table.insert(hints, "- `todo-ai.config_manager.set(key, value)` - Set config values")
+  table.insert(hints, "")
+
+  table.insert(hints, "### Logging")
+  table.insert(hints, "- `todo-ai.logger.debug/info/warn/error()` - Structured logging")
+  table.insert(hints, "- `todo-ai.logger.timer(context)` - Performance tracking")
+  table.insert(hints, "")
+
+  table.insert(hints, "### Chat & Context")
+  table.insert(hints, "- `todo-ai.chat_manager.add_message()` - Manage conversation")
+  table.insert(hints, "- `todo-ai.context_compact.get_for_prompt()` - Get project context")
+  table.insert(hints, "")
+
+  table.insert(hints, "### Common Patterns to Reuse")
+  table.insert(hints, "```lua")
+  table.insert(hints, "-- Error handling pattern")
+  table.insert(hints, "local ok, result = pcall(risky_function)")
+  table.insert(hints, "if not ok then")
+  table.insert(hints, "  logger.error('context', result)")
+  table.insert(hints, "  return nil, result")
+  table.insert(hints, "end")
+  table.insert(hints, "")
+  table.insert(hints, "-- Buffer validation pattern")
+  table.insert(hints, "local valid, err = utils.validate_buffer(bufnr)")
+  table.insert(hints, "if not valid then return false, err end")
+  table.insert(hints, "")
+  table.insert(hints, "-- Async API call pattern")
+  table.insert(hints, "async_manager.rate_limited_request(provider, fn, callback)")
+  table.insert(hints, "```")
+
+  return table.concat(hints, '\n')
+end
+
 function M.generate_full()
   local lines = {}
 
@@ -256,6 +312,10 @@ function M.generate_full()
   table.insert(lines, "```")
   table.insert(lines, M.generate_compact())
   table.insert(lines, "```")
+  table.insert(lines, "")
+
+  -- DRY hints for code reuse
+  table.insert(lines, M.get_dry_hints())
   table.insert(lines, "")
 
   -- Human notes section (protected)

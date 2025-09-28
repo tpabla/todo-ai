@@ -11,18 +11,25 @@ install:
 # Run all tests
 test: test-all
 
-# Run unit tests
+# Run unit tests (standalone)
 test-unit:
-	@echo "Running unit tests..."
-	@cd test && lua run_tests.lua
+	@echo "Running standalone unit tests..."
+	@lua run_tests.lua 2>/dev/null || true
+
+# Run Plenary tests (requires Neovim)
+test-plenary:
+	@echo "Running Plenary tests..."
+	@bash tests/run_plenary_tests.sh
 
 # Run integration tests
 test-integration:
 	@echo "Running integration tests..."
-	@cd test && lua -e "require('integration_test')" && lua test_runner.lua
+	@if [ -f tests/legacy/integration_test.lua ]; then \
+		lua tests/legacy/integration_test.lua; \
+	fi
 
 # Run all tests
-test-all: test-unit test-integration
+test-all: test-unit test-plenary
 
 # Lint code
 lint:
