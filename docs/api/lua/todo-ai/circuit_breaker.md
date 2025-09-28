@@ -31,21 +31,14 @@ CircuitBreakerState
 
 ## Functions
 
-### M.reset_all
+### M.init
 
 ```lua
-function M.reset_all()
-```
-
-### M.record_failure
-
-```lua
-function M.record_failure(service_name, error_message)
+function M.init(service_name)
 ```
 
 **Parameters:**
 
-- `error_message` (string): 
 - `service_name` (string): 
 
 ### M.record_success
@@ -58,6 +51,31 @@ function M.record_success(service_name)
 
 - `service_name` (string): 
 
+### M.record_failure
+
+```lua
+function M.record_failure(service_name, error_message)
+```
+
+**Parameters:**
+
+- `service_name` (string): 
+- `error_message` (string): 
+
+### M.get_state
+
+```lua
+function M.get_state(service_name)
+```
+
+**Parameters:**
+
+- `service_name` (string): 
+
+**Returns:**
+
+- table state
+
 ### M.reset
 
 ```lua
@@ -68,15 +86,11 @@ function M.reset(service_name)
 
 - `service_name` (string): 
 
-### M.init
+### M.reset_all
 
 ```lua
-function M.init(service_name)
+function M.reset_all()
 ```
-
-**Parameters:**
-
-- `service_name` (string): 
 
 ### M.can_proceed
 
@@ -92,17 +106,3 @@ function M.can_proceed(service_name)
 
 - boolean can_proceed
 - string|nil error_message
-
-### M.get_state
-
-```lua
-function M.get_state(service_name)
-```
-
-**Parameters:**
-
-- `service_name` (string): 
-
-**Returns:**
-
-- table state

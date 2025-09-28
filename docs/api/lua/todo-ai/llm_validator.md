@@ -50,21 +50,37 @@ function M.validate_file_path(path)
 - boolean valid
 - string|nil sanitized_path
 
-### M.validate_diff
+### M.create_retry_prompt
 
 ```lua
-function M.validate_diff(diff_text)
+function M.create_retry_prompt(original_prompt, validation_errors, attempt)
 ```
 
 **Parameters:**
 
-- `diff_text` (string): 
+- `attempt` (number): 
+- `original_prompt` (string): 
+- `validation_errors` (string): 
+
+**Returns:**
+
+- string
+
+### M.run_validator
+
+```lua
+function M.run_validator(name, data)
+```
+
+**Parameters:**
+
+- `name` (string): 
+- `data` (any): 
 
 **Returns:**
 
 - boolean valid
 - string|nil error
-- string|nil fixed_diff
 
 ### M.sanitize_content
 
@@ -96,17 +112,6 @@ function M.validate_chat_response(response)
 - string|nil error
 - table|nil cleaned_response
 
-### M.register_validator
-
-```lua
-function M.register_validator(name, validator)
-```
-
-**Parameters:**
-
-- `name` (string): 
-- `validator` (function): 
-
 ### M.validate_buffer_operation
 
 ```lua
@@ -124,21 +129,29 @@ function M.validate_buffer_operation(bufnr, start_line, end_line)
 - boolean valid
 - string|nil error
 
-### M.run_validator
+### M.register_validator
 
 ```lua
-function M.run_validator(name, data)
+function M.register_validator(name, validator)
 ```
 
 **Parameters:**
 
 - `name` (string): 
-- `data` (any): 
+- `validator` (function): 
 
-**Returns:**
+### M.validated_request
 
-- boolean valid
-- string|nil error
+```lua
+function M.validated_request(provider, messages, config, callback)
+```
+
+**Parameters:**
+
+- `messages` (table): 
+- `config` (table): 
+- `provider` (table): 
+- `callback` (function): 
 
 ### M.validate_json
 
@@ -156,31 +169,18 @@ function M.validate_json(json_str)
 - any|nil data
 - string|nil error
 
-### M.create_retry_prompt
+### M.validate_diff
 
 ```lua
-function M.create_retry_prompt(original_prompt, validation_errors, attempt)
+function M.validate_diff(diff_text)
 ```
 
 **Parameters:**
 
-- `attempt` (number): 
-- `original_prompt` (string): 
-- `validation_errors` (string): 
+- `diff_text` (string): 
 
 **Returns:**
 
-- string
-
-### M.validated_request
-
-```lua
-function M.validated_request(provider, messages, config, callback)
-```
-
-**Parameters:**
-
-- `callback` (function): 
-- `messages` (table): 
-- `provider` (table): 
-- `config` (table): 
+- boolean valid
+- string|nil error
+- string|nil fixed_diff

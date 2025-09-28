@@ -21,6 +21,22 @@ ConfigManager
 
 ## Functions
 
+### M.apply_env_overrides
+
+```lua
+function M.apply_env_overrides()
+```
+
+### M.get_info
+
+```lua
+function M.get_info()
+```
+
+**Returns:**
+
+- table info
+
 ### M.set
 
 ```lua
@@ -32,48 +48,6 @@ function M.set(key, value, persist)
 - `persist` (boolean|nil): Whether to save to file
 - `value` (any): 
 - `key` (string): Dot-separated path
-
-### M.open_in_editor
-
-```lua
-function M.open_in_editor(scope)
-```
-
-**Parameters:**
-
-- `scope` (string|nil): 'global' or 'project'
-
-### M.apply_env_overrides
-
-```lua
-function M.apply_env_overrides()
-```
-
-### M.init
-
-```lua
-function M.init()
-```
-
-**Parameters:**
-
-- `config` (table): 
-- `path` (string): 
-
-**Returns:**
-
-- table|nil config, string|nil error
-- boolean success, string|nil error
-
-### M.validate
-
-```lua
-function M.validate()
-```
-
-**Returns:**
-
-- boolean valid, string[]|nil errors
 
 ### M.save
 
@@ -104,26 +78,6 @@ function M.merge_configs(base, override)
 
 - table merged
 
-### M.get_info
-
-```lua
-function M.get_info()
-```
-
-**Returns:**
-
-- table info
-
-### M.reset
-
-```lua
-function M.reset(scope)
-```
-
-**Parameters:**
-
-- `scope` (string|nil): 'all', 'global', or 'project'
-
 ### M.get
 
 ```lua
@@ -137,3 +91,49 @@ function M.get(key)
 **Returns:**
 
 - any value
+
+### M.init
+
+```lua
+function M.init()
+```
+
+**Parameters:**
+
+- `config` (table): 
+- `path` (string): 
+
+**Returns:**
+
+- table|nil config, string|nil error
+- boolean success, string|nil error
+
+### M.reset
+
+```lua
+function M.reset(scope)
+```
+
+**Parameters:**
+
+- `scope` (string|nil): 'all', 'global', or 'project'
+
+### M.validate
+
+```lua
+function M.validate()
+```
+
+**Returns:**
+
+- boolean valid, string[]|nil errors
+
+### M.open_in_editor
+
+```lua
+function M.open_in_editor(scope)
+```
+
+**Parameters:**
+
+- `scope` (string|nil): 'global' or 'project'

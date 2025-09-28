@@ -3,20 +3,6 @@
 Retry manager with exponential backoff
 @class RetryManager
 
-## Class: RetryConfig
-
-```lua
-RetryConfig
-```
-
-### Fields
-
-- **max_retries** (`number`): Maximum number of retry attempts
-- **base_delay** (`number`): Base delay in milliseconds
-- **max_delay** (`number`): Maximum delay in milliseconds
-- **exponential_base** (`number`): Base for exponential backoff (typically 2)
-- **jitter** (`boolean`): Add random jitter to prevent thundering herd
-
 ## Class: RetryManager
 
 ```lua
@@ -31,7 +17,34 @@ RetryManager
 - **exponential_base** (`number`): Base for exponential backoff (typically 2)
 - **jitter** (`boolean`): Add random jitter to prevent thundering herd
 
+## Class: RetryConfig
+
+```lua
+RetryConfig
+```
+
+### Fields
+
+- **max_retries** (`number`): Maximum number of retry attempts
+- **base_delay** (`number`): Base delay in milliseconds
+- **max_delay** (`number`): Maximum delay in milliseconds
+- **exponential_base** (`number`): Base for exponential backoff (typically 2)
+- **jitter** (`boolean`): Add random jitter to prevent thundering herd
+
 ## Functions
+
+### M.execute_with_retry_async
+
+```lua
+function M.execute_with_retry_async(fn, service_name, config, callback)
+```
+
+**Parameters:**
+
+- `service_name` (string): Name of the service
+- `fn` (function): The async function to execute (takes callback)
+- `config?` (RetryConfig): Optional retry configuration
+- `callback` (function(success:): boolean, result: any)
 
 ### M.execute_with_retry
 
@@ -41,12 +54,12 @@ function M.execute_with_retry(fn, service_name, config)
 
 **Parameters:**
 
+- `service_name` (string): Name of the service (for circuit breaker)
+- `config?` (RetryConfig): Optional retry configuration
 - `attempt` (number): Current attempt (0-indexed)
 - `fn` (function): The function to execute
-- `config?` (RetryConfig): Optional retry configuration
-- `service_name` (string): Name of the service (for circuit breaker)
-- `error_message` (string): 
 - `config` (RetryConfig): 
+- `error_message` (string): 
 
 **Returns:**
 
@@ -67,16 +80,3 @@ function M.get_stats(service_name)
 **Returns:**
 
 - table
-
-### M.execute_with_retry_async
-
-```lua
-function M.execute_with_retry_async(fn, service_name, config, callback)
-```
-
-**Parameters:**
-
-- `callback` (function(success:): boolean, result: any)
-- `config?` (RetryConfig): Optional retry configuration
-- `fn` (function): The async function to execute (takes callback)
-- `service_name` (string): Name of the service

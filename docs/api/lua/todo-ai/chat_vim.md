@@ -47,10 +47,60 @@ function M.get_input()
 
 - string|nil
 
-### M.close
+### M.clear_conversation
 
 ```lua
-function M.close()
+function M.clear_conversation()
+```
+
+### M.open
+
+```lua
+function M.open()
+```
+
+### M.add_message_to_buffer
+
+```lua
+function M.add_message_to_buffer(lines, role, content)
+```
+
+**Parameters:**
+
+- `lines` (string[]): 
+- `content` (string): 
+- `role` (string): 
+
+### M.handle_code_changes
+
+```lua
+function M.handle_code_changes(changes)
+```
+
+**Parameters:**
+
+- `changes` (table[]): 
+
+### M.clear_input
+
+```lua
+function M.clear_input()
+```
+
+### M.add_response
+
+```lua
+function M.add_response(content)
+```
+
+**Parameters:**
+
+- `content` (string): 
+
+### M.setup_autocmds
+
+```lua
+function M.setup_autocmds()
 ```
 
 ### M.new_conversation
@@ -59,15 +109,17 @@ function M.close()
 function M.new_conversation()
 ```
 
-### M.build_context
+### M.close
 
 ```lua
-function M.build_context()
+function M.close()
 ```
 
-**Returns:**
+### M.setup_keybindings
 
-- table
+```lua
+function M.setup_keybindings()
+```
 
 ### M.update_buffer
 
@@ -81,18 +133,6 @@ function M.update_buffer()
 function M.send_message()
 ```
 
-### M.setup_keybindings
-
-```lua
-function M.setup_keybindings()
-```
-
-### M.move_to_input
-
-```lua
-function M.move_to_input()
-```
-
 ### M.process_message
 
 ```lua
@@ -103,64 +143,24 @@ function M.process_message(message)
 
 - `message` (string): 
 
-### M.handle_code_changes
-
-```lua
-function M.handle_code_changes(changes)
-```
-
-**Parameters:**
-
-- `changes` (table[]): 
-
-### M.open
-
-```lua
-function M.open()
-```
-
-### M.setup_autocmds
-
-```lua
-function M.setup_autocmds()
-```
-
-### M.add_message_to_buffer
-
-```lua
-function M.add_message_to_buffer(lines, role, content)
-```
-
-**Parameters:**
-
-- `role` (string): 
-- `content` (string): 
-- `lines` (string[]): 
-
 ### M.initialize_buffer
 
 ```lua
 function M.initialize_buffer()
 ```
 
-### M.add_response
+### M.build_context
 
 ```lua
-function M.add_response(content)
+function M.build_context()
 ```
 
-**Parameters:**
+**Returns:**
 
-- `content` (string): 
+- table
 
-### M.clear_input
-
-```lua
-function M.clear_input()
-```
-
-### M.clear_conversation
+### M.move_to_input
 
 ```lua
-function M.clear_conversation()
+function M.move_to_input()
 ```
