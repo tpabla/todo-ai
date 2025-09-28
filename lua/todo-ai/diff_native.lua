@@ -143,7 +143,7 @@ function M.show_response(target_buf, response)
   if in_async then
     vim.schedule(function()
       if vim.api.nvim_buf_is_valid(target_buf) then
-        M.setup_inline_diff_view(target_buf, lines, display_lines)
+        M.setup_inline_diff_view(target_buf, lines, display_lines, false)
 
         -- Show notification
         local num_changes = #M.state.hunks
@@ -163,7 +163,7 @@ function M.show_response(target_buf, response)
     return
   end
 
-  M.setup_inline_diff_view(target_buf, lines, display_lines)
+  M.setup_inline_diff_view(target_buf, lines, display_lines, false)
 
   -- Show notification
   local num_changes = #M.state.hunks
@@ -776,7 +776,7 @@ function M.update_diff_display()
 
   -- Refresh the display with the new unified result
   M.clear_inline_diff()
-  M.setup_inline_diff_view(M.state.target_buf, M.state.original_lines, new_lines)
+  M.setup_inline_diff_view(M.state.target_buf, M.state.original_lines, new_lines, true)
 end
 
 return M
