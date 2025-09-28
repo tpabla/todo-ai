@@ -6,6 +6,32 @@ M.api_key = vim.env.ANTHROPIC_API_KEY
 M.api_url = 'https://api.anthropic.com/v1/messages'
 M.default_model = 'claude-3-5-sonnet-20241022' -- Latest Claude 3.5 Sonnet
 
+-- System prompt for all Claude interactions
+function M.get_system_prompt()
+  local schema = require('todo-ai.schema')
+  return string.format([[
+You are a code assistant integrated into Neovim. You must ALWAYS respond with valid JSON following this schema:
+
+%s
+
+Rules:
+1. ALWAYS use the "changes" array for any code modifications to files
+2. Use "code_snippet" ONLY for showing example code in chat (won't modify files)
+3. For each change, specify exact start_line and end_line (1-indexed)
+4. The "code" field in changes should contain ONLY the replacement code
+5. Include "description" for each change explaining what it does
+6. Include overall "explanation" summarizing all changes
+7. Maintain original indentation in replaced code
+8. Escape all quotes properly for valid JSON
+9. NEVER include markdown formatting in JSON values
+10. For new files, use "new_file" with path and single change starting at line 1
+
+Examples:
+%s]],
+    schema.get_schema_description(),
+    vim.fn.json_encode(schema.examples.multiple_changes))
+end
+
 function M.build_prompt(instruction, context)
   -- Parse context if it's JSON
   local context_obj = nil
@@ -18,54 +44,62 @@ function M.build_prompt(instruction, context)
   if context_obj and context_obj.selected_text then
     -- Visual selection mode
     return string.format([[
-You are working on a file with the following content:
-
 File: %s
 Language: %s
 
 Full file content:
 %s
 
-The user has selected the following code (lines %d-%d):
+The user has selected lines %d-%d:
 ```
 %s
 ```
 
 Task: %s
 
-Respond with ONLY valid JSON:
-{
-  "code": "complete replacement code for the selected lines",
-  "explanation": "what changed and why"
-}
-
-Important:
-- The "code" field should contain ONLY the replacement for the selected lines, not the entire file
-- Include the COMPLETE replacement code
-- Maintain the same indentation as the original
-- Escape quotes properly for valid JSON]],
+Create a "changes" array entry to replace lines %d-%d with the new implementation.]],
       context_obj.file_path or 'unknown',
       context_obj.language or 'unknown',
       context_obj.file_content or '',
       context_obj.line_number or 0,
       context_obj.end_line or context_obj.line_number or 0,
       context_obj.selected_text or '',
-      instruction)
+      instruction,
+      context_obj.line_number or 0,
+      context_obj.end_line or context_obj.line_number or 0)
+  elseif context_obj and context_obj.line_number then
+    -- TODO mode - we know the line number
+    return string.format([[
+File: %s
+Language: %s
+
+Full file content:
+%s
+
+TODO at line %d: %s
+
+Context around TODO:
+%s
+
+Create a "changes" array entry to replace the TODO at line %d.]],
+      context_obj.file_path or 'unknown',
+      context_obj.language or 'unknown',
+      context_obj.file_content or '',
+      context_obj.line_number or 0,
+      instruction,
+      vim.fn.json_encode(context_obj.surrounding_lines or {}),
+      context_obj.line_number or 0)
   else
-    -- Regular TODO mode
+    -- Chat mode or general query
     return string.format([[
 Task: %s
 
 Context:
 %s
 
-Respond with ONLY valid JSON:
-{
-  "code": "complete implementation to replace TODO",
-  "explanation": "what the code does"
-}
-
-Important: Include the COMPLETE code in the "code" field. Escape quotes properly for valid JSON.]], instruction, context)
+Provide appropriate response using the JSON schema. Use "code_snippet" for examples, "changes" for file modifications.]],
+      instruction,
+      context)
   end
 end
 
@@ -91,6 +125,7 @@ function M.complete(instruction, context, opts)
     model = model,
     max_tokens = max_tokens,
     temperature = temperature,
+    system = M.get_system_prompt(),
     messages = {
       {
         role = 'user',
@@ -147,6 +182,7 @@ function M.complete_async(instruction, context, opts, callback)
     model = model,
     max_tokens = max_tokens,
     temperature = temperature,
+    system = M.get_system_prompt(),
     messages = {
       {
         role = 'user',
@@ -222,6 +258,7 @@ function M.chat(messages, opts)
     model = model,
     max_tokens = max_tokens,
     temperature = temperature,
+    system = M.get_system_prompt(),
     messages = claude_messages
   })
 
@@ -295,6 +332,7 @@ function M.chat_async(messages, opts, callback)
     model = model,
     max_tokens = max_tokens,
     temperature = temperature,
+    system = M.get_system_prompt(),
     messages = claude_messages
   })
 

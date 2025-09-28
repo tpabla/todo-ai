@@ -317,40 +317,31 @@ function M.parse_json_response(response, result)
     return
   end
 
-  -- Direct mapping for our requested format
-  if data.code then
-    result.code = data.code
+  -- Handle new schema format
+  if data.changes then
+    result.changes = data.changes
+  end
+
+  if data.code_snippet then
+    result.code_snippet = data.code_snippet
   end
 
   if data.explanation then
     result.explanation = data.explanation
   end
 
+  if data.new_file then
+    result.new_file = data.new_file
+  end
+
+  if data.replace_buffer then
+    result.replace_buffer = data.replace_buffer
+  end
+
   if data.thinking then
     -- Store thinking separately
     result.thinking = { thinking = data.thinking }
     result.thinking_formatted = M.format_thinking({ thinking = data.thinking })
-  end
-
-  -- Fallback to other common keys if needed
-  if not result.code then
-    local code_keys = {'implementation', 'solution', 'answer', 'result'}
-    for _, key in ipairs(code_keys) do
-      if data[key] then
-        result.code = data[key]
-        break
-      end
-    end
-  end
-
-  if not result.explanation then
-    local explanation_keys = {'description', 'reasoning', 'context', 'notes'}
-    for _, key in ipairs(explanation_keys) do
-      if data[key] then
-        result.explanation = data[key]
-        break
-      end
-    end
   end
 
   result.parsed_sections = data

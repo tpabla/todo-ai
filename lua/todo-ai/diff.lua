@@ -331,6 +331,191 @@ function M.accept(todo)
   return true
 end
 
+-- Show diff for specific line range
+function M.show_range(bufnr, start_line, end_line, new_code, explanation)
+  M.state.target_buf = bufnr
+  M.state.target_start_line = start_line
+  M.state.target_end_line = end_line
+  M.state.is_range = true
+
+  -- Setup highlights
+  M.setup_highlights()
+
+  -- Store original lines
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  M.state.original_lines = vim.deepcopy(lines)
+
+  -- Clean code
+  new_code = M.clean_code_block(new_code)
+
+  -- Parse new code into lines
+  local new_lines = vim.split(new_code, '\n')
+
+  -- Get indent from first line
+  local indent = ''
+  if start_line > 0 and start_line <= #lines then
+    indent = lines[start_line]:match('^(%s*)') or ''
+  end
+
+  -- Build new buffer content with diff display
+  local new_buffer_lines = {}
+
+  -- Add lines before the change
+  for i = 1, start_line - 1 do
+    table.insert(new_buffer_lines, lines[i])
+  end
+
+  -- Add diff header
+  table.insert(new_buffer_lines, string.format('%s@@ -%d,%d +%d,%d @@ %s',
+    indent,
+    start_line, end_line - start_line + 1,
+    start_line, #new_lines,
+    explanation or ''))
+
+  -- Show removed lines
+  for i = start_line, math.min(end_line, #lines) do
+    table.insert(new_buffer_lines, '-' .. lines[i])
+  end
+
+  -- Show added lines
+  for _, line in ipairs(new_lines) do
+    table.insert(new_buffer_lines, '+' .. indent .. line)
+  end
+
+  -- Add remaining lines
+  for i = end_line + 1, #lines do
+    table.insert(new_buffer_lines, lines[i])
+  end
+
+  -- Apply to buffer
+  vim.cmd('noautocmd silent! undojoin')
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, new_buffer_lines)
+  vim.bo[bufnr].modified = false
+
+  -- Apply highlighting (account for 0-based indexing in Neovim)
+  local ns_id = vim.api.nvim_create_namespace('todo_ai_diff')
+
+  -- The header is now at line start_line (1-based) in the modified buffer
+  -- Convert to 0-based for highlight API
+  local header_line_idx = start_line - 1
+
+  -- Highlight header
+  vim.api.nvim_buf_add_highlight(bufnr, ns_id, 'TodoAIDiffHeader', header_line_idx, 0, -1)
+
+  -- Highlight removed lines (they start right after header in 1-based indexing)
+  local removed_start = start_line + 1
+  for i = 0, (end_line - start_line) do
+    local line_idx = removed_start + i - 1
+    vim.api.nvim_buf_add_highlight(bufnr, ns_id, 'TodoAIDiffDelete', line_idx, 0, 1)
+    vim.api.nvim_buf_add_highlight(bufnr, ns_id, 'TodoAIDiffDeleteLine', line_idx, 1, -1)
+  end
+
+  -- Highlight added lines
+  local added_start = removed_start + (end_line - start_line + 1)
+  for i = 0, #new_lines - 1 do
+    local line_idx = added_start + i - 1
+    vim.api.nvim_buf_add_highlight(bufnr, ns_id, 'TodoAIDiffAdd', line_idx, 0, 1)
+    vim.api.nvim_buf_add_highlight(bufnr, ns_id, 'TodoAIDiffAddLine', line_idx, 1, -1)
+  end
+
+  -- Add accept/reject hint
+  vim.api.nvim_buf_set_extmark(bufnr, ns_id, header_line_idx, 0, {
+    virt_text = {{' [<leader>ta: accept, <leader>tr: reject]', 'Comment'}},
+    virt_text_pos = 'eol',
+  })
+
+  -- Store new lines for accept
+  M.state.new_lines = {}
+  for i = 1, start_line - 1 do
+    table.insert(M.state.new_lines, lines[i])
+  end
+  for _, line in ipairs(new_lines) do
+    table.insert(M.state.new_lines, indent .. line)
+  end
+  for i = end_line + 1, #lines do
+    table.insert(M.state.new_lines, lines[i])
+  end
+end
+
+-- Show multiple changes at once
+function M.show_multi_changes(bufnr, changes, explanation)
+  -- TODO: Implement multi-change diff view
+  -- For now, just show the first change
+  if #changes > 0 then
+    local change = changes[1]
+    M.show_range(bufnr, change.start_line, change.end_line, change.code, change.description or explanation)
+  end
+end
+
+-- Show diff for entire buffer replacement
+function M.show_full_buffer(bufnr, new_code, explanation)
+  M.state.target_buf = bufnr
+  M.state.is_full_buffer = true
+
+  -- Setup minimalist highlights
+  M.setup_highlights()
+
+  -- Store original lines
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  M.state.original_lines = vim.deepcopy(lines)
+
+  -- Clean markdown formatting if present
+  new_code = M.clean_code_block(new_code)
+
+  -- Parse new code into lines
+  local new_lines = vim.split(new_code, '\n')
+
+  -- Build diff display
+  local diff_lines = {}
+
+  -- Add diff header
+  table.insert(diff_lines, '@@ -1,' .. #lines .. ' +1,' .. #new_lines .. ' @@ [Full Buffer Replacement]')
+
+  -- Show removed lines (original content)
+  for _, line in ipairs(lines) do
+    table.insert(diff_lines, '-' .. line)
+  end
+
+  -- Show added lines (new content)
+  for _, line in ipairs(new_lines) do
+    table.insert(diff_lines, '+' .. line)
+  end
+
+  -- Apply the diff display to the buffer
+  vim.cmd('noautocmd silent! undojoin')
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, diff_lines)
+  vim.bo[bufnr].modified = false
+
+  -- Apply highlighting
+  local ns_id = vim.api.nvim_create_namespace('todo_ai_diff')
+
+  -- Highlight header
+  vim.api.nvim_buf_add_highlight(bufnr, ns_id, 'TodoAIDiffHeader', 0, 0, -1)
+
+  -- Highlight removed lines
+  for i = 1, #lines do
+    vim.api.nvim_buf_add_highlight(bufnr, ns_id, 'TodoAIDiffDelete', i, 0, 1)
+    vim.api.nvim_buf_add_highlight(bufnr, ns_id, 'TodoAIDiffDeleteLine', i, 1, -1)
+  end
+
+  -- Highlight added lines
+  local added_start = 1 + #lines
+  for i = 1, #new_lines do
+    local line_idx = added_start + i - 1
+    vim.api.nvim_buf_add_highlight(bufnr, ns_id, 'TodoAIDiffAdd', line_idx, 0, 1)
+    vim.api.nvim_buf_add_highlight(bufnr, ns_id, 'TodoAIDiffAddLine', line_idx, 1, -1)
+  end
+
+  -- Add virtual text for accept/reject
+  vim.api.nvim_buf_set_extmark(bufnr, ns_id, 0, 0, {
+    virt_text = {{' [<leader>ta: accept, <leader>tr: reject]', 'Comment'}},
+    virt_text_pos = 'eol',
+  })
+
+  -- Store the new lines for replacement
+  M.state.new_lines = new_lines
+end
+
 -- Show diff for visual selection
 function M.show_visual(bufnr, start_line, end_line, new_code, explanation)
   M.state.target_buf = bufnr

@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        lua-version: ['5.1', '5.2', '5.3', '5.4']
+        neovim-version: ['stable', 'nightly']
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Lua
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y lua${{ matrix.lua-version }} luarocks
+
+    - name: Install Neovim
+      run: |
+        if [ "${{ matrix.neovim-version }}" = "stable" ]; then
+          sudo apt-get install -y neovim
+        else
+          wget https://github.com/neovim/neovim/releases/download/nightly/nvim-linux64.tar.gz
+          tar xzf nvim-linux64.tar.gz
+          sudo mv nvim-linux64/bin/nvim /usr/local/bin/
+        fi
+
+    - name: Install dependencies
+      run: |
+        sudo luarocks install luacheck
+        sudo luarocks install busted
+
+    - name: Run linter
+      run: make lint
+
+    - name: Run unit tests
+      run: make test-unit
+
+    - name: Run integration tests
+      run: make test-integration
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+    - name: Check code coverage
+      run: |
+        sudo luarocks install luacov
+        busted --coverage
+        luacov
+      continue-on-error: true
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Run security checks
+      run: |
+        # Check for hardcoded secrets
+        grep -r "api_key\|password\|secret" lua/ --exclude="*.test.lua" | grep -v "vim.env" || true
+
+    - name: Check dependencies
+      run: make check-deps

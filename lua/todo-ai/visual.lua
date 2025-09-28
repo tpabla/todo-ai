@@ -198,11 +198,12 @@ function M.process_visual_selection()
       end
 
       -- Display diff for the selected region
-      if response.code then
+      if response.changes and #response.changes > 0 then
         local diff = require('todo-ai.diff')
 
-        -- For visual selection, we replace the selected lines
-        diff.show_visual(original_bufnr, start_line, end_line, response.code, response.explanation)
+        -- Visual selection uses changes format
+        local change = response.changes[1]
+        diff.show_range(original_bufnr, change.start_line or start_line, change.end_line or end_line, change.code, change.description or response.explanation)
         init.state.pending_diff = response
         init.state.pending_diff.is_visual = true
         init.state.pending_diff.start_line = start_line
@@ -218,8 +219,10 @@ function M.process_visual_selection()
         chat.add_message('ai', formatted)
       else
         -- Fallback to simple display
-        if response.code then
-          chat.add_message('ai', 'Generated code:\n```\n' .. response.code .. '\n```')
+        if response.changes then
+          chat.add_message('ai', 'Generated changes for selected lines')
+        elseif response.code_snippet then
+          chat.add_message('ai', 'Code example:\n```\n' .. response.code_snippet .. '\n```')
         end
         if response.explanation then
           chat.add_message('ai', response.explanation)

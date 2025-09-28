@@ -89,21 +89,15 @@ function M.process_todo(todo, bufnr)
       return
     end
 
-    -- Display diff
-    if response.code then
-      -- Check if explanation contains more complete code
-      local code_to_use = response.code
-      if response.explanation and #response.explanation > #response.code * 2 then
-        -- If explanation is much longer and looks like code, it might be the complete version
-        local parser = require('todo-ai.parser')
-        if parser.looks_like_code and parser.looks_like_code(response.explanation) then
-          code_to_use = response.explanation
-        end
-      end
-
-      diff.show(bufnr, todo.line, code_to_use, response.explanation)
+    -- Display diff based on new schema
+    if response.changes and #response.changes > 0 then
+      -- TODO replacements use changes format now
+      local change = response.changes[1]
+      diff.show_range(bufnr, change.start_line or todo.line, change.end_line or todo.line, change.code, change.description or response.explanation)
       M.state.pending_diff = response
-      M.state.pending_diff.code = code_to_use  -- Update with the code we're actually using
+    elseif response.code_snippet then
+      -- Just informational, no diff
+      M.state.pending_diff = nil
     end
 
     -- Store the target buffer filetype for proper formatting
@@ -115,8 +109,10 @@ function M.process_todo(todo, bufnr)
       chat.add_message('ai', formatted)
     else
       -- Fallback to simple display
-      if response.code then
-        chat.add_message('ai', 'Generated code:\n```\n' .. response.code .. '\n```')
+      if response.changes then
+        chat.add_message('ai', 'Generated changes for lines')
+      elseif response.code_snippet then
+        chat.add_message('ai', 'Code example:\n```\n' .. response.code_snippet .. '\n```')
       end
       if response.explanation then
         chat.add_message('ai', response.explanation)
@@ -129,6 +125,10 @@ function M.gather_context(bufnr, todo)
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local file_content = table.concat(lines, '\n')
   local file_path = vim.api.nvim_buf_get_name(bufnr)
+
+  -- Load project context
+  local context_module = require('todo-ai.context_compact')
+  local project_context = context_module.get_for_prompt()
 
   -- Get other open buffers for context (read-only)
   local other_buffers = {}
@@ -172,6 +172,7 @@ function M.gather_context(bufnr, todo)
     line_number = todo.line,
     surrounding_lines = M.get_surrounding_lines(lines, todo.line, 20),
     project_root = project_root,
+    project_context = project_context,  -- Compact project context
     cached_context = cached_context,
     other_buffers = other_buffers  -- Additional context from open buffers
   }
@@ -228,9 +229,18 @@ function M.format_response(response)
     table.insert(formatted, response.thinking_formatted)
   end
 
-  -- Add generated code
-  if response.code then
-    table.insert(formatted, '### 📄 Generated Code\n```' .. (vim.bo.filetype or '') .. '\n' .. response.code .. '\n```')
+  -- Add generated code or changes
+  if response.changes then
+    table.insert(formatted, '### 📄 Code Changes')
+    for i, change in ipairs(response.changes) do
+      table.insert(formatted, string.format('\n**Change %d** (lines %d-%d): %s\n```%s\n%s\n```',
+        i, change.start_line, change.end_line,
+        change.description or '',
+        vim.bo.filetype or '',
+        change.code))
+    end
+  elseif response.code_snippet then
+    table.insert(formatted, '### 📄 Code Example\n```' .. (vim.bo.filetype or '') .. '\n' .. response.code_snippet .. '\n```')
   end
 
   -- Add explanation if different from thinking

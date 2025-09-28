@@ -345,15 +345,36 @@ function M.send_to_backend(message)
         M.add_message('ai', content)
       end
 
-      -- If there's new code, update the diff
-      if response.code and init.state.current_todo then
+      -- Handle code changes based on new schema
+      if response.changes and #response.changes > 0 then
         local diff = require('todo-ai.diff')
-        diff.show(
-          vim.api.nvim_get_current_buf(),
-          init.state.current_todo.line,
-          response.code,
-          response.explanation or ""
-        )
+
+        -- Store current buffer for changes
+        local target_buf = context_info.current_buffer
+
+        -- Check if this is a new file creation
+        if response.new_file then
+          -- Create new file and apply changes
+          local content = response.changes[1].code
+          M.create_new_file(response.new_file, content)
+        elseif response.replace_buffer then
+          -- Replace entire buffer
+          local full_code = response.changes[1].code
+          diff.show_full_buffer(target_buf, full_code, response.explanation or "")
+          init.state.pending_diff = response
+          init.state.pending_diff.is_full_buffer = true
+        else
+          -- Apply multiple changes as edits
+          M.queue_changes(target_buf, response.changes, response.explanation)
+        end
+      elseif response.code_snippet then
+        -- Just display code snippet in chat, no buffer changes
+        local snippet_display = "```" .. (vim.bo.filetype or "") .. "\n" .. response.code_snippet .. "\n```"
+        if response.explanation then
+          M.add_message('ai', response.explanation .. "\n\n" .. snippet_display)
+        else
+          M.add_message('ai', snippet_display)
+        end
       end
     end
   end)
@@ -823,6 +844,91 @@ function M.clear_edit_status()
       vim.api.nvim_buf_clear_namespace(edit.buffer_id, ns_id, 0, -1)
     end
   end
+end
+
+function M.queue_changes(target_buf, changes, explanation)
+  -- Queue and display changes for review
+  local diff = require('todo-ai.diff')
+  local init = require('todo-ai.init')
+
+  -- If single change, show standard diff
+  if #changes == 1 then
+    local change = changes[1]
+    diff.show_range(target_buf, change.start_line, change.end_line, change.code, change.description or explanation or "")
+    init.state.pending_diff = {
+      changes = changes,
+      explanation = explanation,
+      is_multi_change = false
+    }
+  else
+    -- Multiple changes - show multi-diff view
+    diff.show_multi_changes(target_buf, changes, explanation)
+    init.state.pending_diff = {
+      changes = changes,
+      explanation = explanation,
+      is_multi_change = true
+    }
+  end
+end
+
+function M.create_new_file(filename, content)
+  -- Create new buffer
+  local new_buf = vim.api.nvim_create_buf(true, false)  -- listed, not scratch
+
+  -- Set the buffer name
+  local full_path = filename
+  if not filename:match('^/') then
+    -- Relative path, make it absolute
+    full_path = vim.fn.getcwd() .. '/' .. filename
+  end
+
+  vim.api.nvim_buf_set_name(new_buf, full_path)
+
+  -- Set the content
+  local lines = vim.split(content, '\n')
+  vim.api.nvim_buf_set_lines(new_buf, 0, -1, false, lines)
+
+  -- Open in a new window (split)
+  vim.cmd('split')
+  vim.api.nvim_win_set_buf(0, new_buf)
+
+  -- Set filetype based on extension
+  local ext = filename:match('%.([^%.]+)$')
+  if ext then
+    local filetype_map = {
+      py = 'python',
+      js = 'javascript',
+      ts = 'typescript',
+      jsx = 'javascript',
+      tsx = 'typescript',
+      lua = 'lua',
+      rs = 'rust',
+      go = 'go',
+      java = 'java',
+      c = 'c',
+      cpp = 'cpp',
+      h = 'c',
+      hpp = 'cpp',
+      md = 'markdown',
+      json = 'json',
+      yaml = 'yaml',
+      yml = 'yaml',
+      toml = 'toml',
+      sh = 'sh',
+      bash = 'bash',
+      zsh = 'zsh',
+      vim = 'vim',
+    }
+    local ft = filetype_map[ext] or ext
+    vim.bo[new_buf].filetype = ft
+  end
+
+  -- Mark as modified so user knows to save
+  vim.bo[new_buf].modified = true
+
+  M.add_message('system', string.format('✨ Created new file: %s\n💾 Use :w to save to disk', full_path))
+
+  return new_buf
 end
 
 return M
