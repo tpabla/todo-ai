@@ -19,25 +19,24 @@ A sophisticated Neovim plugin that brings AI assistance directly to your editor 
 ```
 User Input → Parser → Context Builder → LLM Provider → Response Validator → Diff Display
      ↑                      ↓                                   ↓
-     └──────── Chat Manager ←────── Async Manager ──────────────┘
+     └──────── Chat Manager ←────── Retry Manager ──────────────┘
+                           ↓                ↓
+                    HTTP Client    Command Executor
+                   (Plenary curl)   (Plenary Job)
 ```
 
 ### Core Components
 
-1. **Schema-Based Communication**: All LLM interactions use a unified schema:
-   ```lua
-   {
-     messages = { {role = "user", content = "..."} },
-     context = { project_info = "...", files = {...} },
-     config = { model = "...", temperature = 0.7 }
-   }
-   ```
+1. **Native Plenary Integration**: Built on proven Neovim libraries:
+   - Uses Plenary's Job API for safe command execution
+   - Plenary's curl for reliable HTTP requests
+   - Native Vim validation and path handling
 
-2. **Response Validation**: Every LLM response passes through validation:
+2. **Response Validation & Auto-Recovery**: Every LLM response is validated:
    - Sanitizes potential injection attempts
    - Validates code changes (line numbers, syntax)
    - Auto-fixes common issues (swapped line numbers, trailing commas)
-   - Retries with error feedback if validation fails
+   - Exponential backoff with circuit breakers for resilience
 
 3. **Context Management**: Smart context generation with compression:
    - Gathers project structure, dependencies, patterns
@@ -45,11 +44,11 @@ User Input → Parser → Context Builder → LLM Provider → Response Validato
    - Caches for 5 minutes to reduce redundant processing
    - Includes DRY hints for code reuse
 
-4. **Security Layer**: Multiple protection levels:
-   - Command whitelisting (only safe commands allowed)
-   - Path sanitization (no directory traversal)
-   - Input validation (prevents injection)
-   - Rate limiting (per-provider token buckets)
+4. **Capability-Based Security**: Secure by design:
+   - Plenary's Job API prevents command injection
+   - Input validation with well-defined schemas
+   - No custom security layer - relies on proven components
+   - Rate limiting with circuit breakers
 
 ## 📦 Installation
 
@@ -242,8 +241,9 @@ todo-ai/
 │   ├── chat_manager.lua        # Conversation state & memory
 │   ├── context_compact.lua     # Project context generation
 │   ├── llm_validator.lua       # Response validation & retry
-│   ├── secure_exec.lua         # Safe command execution
-│   ├── async_manager.lua       # Async ops & rate limiting
+│   ├── retry_manager.lua       # Exponential backoff & circuit breaker
+│   ├── http_client.lua         # HTTP requests via Plenary
+│   ├── command_executor.lua    # Safe execution via Plenary Job
 │   ├── config_manager.lua      # Config persistence
 │   ├── diff.lua               # Diff display & highlighting
 │   └── utils.lua              # Shared utilities
@@ -358,6 +358,29 @@ end
 -- Register in providers/init.lua
 providers.register('newprovider', require('todo-ai.providers.newprovider'))
 ```
+
+## 📚 API Documentation
+
+Auto-generated API documentation from LuaLS annotations:
+
+- [Generate docs](docs/PROVIDER_API.md) - Provider API documentation
+- [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
+
+### Generating Documentation
+
+```bash
+# Generate API docs from source annotations
+make docs
+
+# View generated documentation
+ls docs/api/
+```
+
+The plugin uses LuaLS annotations for type checking and documentation generation. All public APIs are documented with:
+- Parameter types and descriptions
+- Return value specifications
+- Usage examples
+- Error conditions
 
 ## 🔒 Security Features
 

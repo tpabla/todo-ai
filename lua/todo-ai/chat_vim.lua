@@ -289,7 +289,6 @@ end
 ---@param message string
 function M.process_message(message)
   local chat_manager = require('todo-ai.chat_manager')
-  local async_manager = require('todo-ai.async_manager')
   local config = require('todo-ai.config_manager')
 
   -- Add to chat manager
@@ -311,9 +310,9 @@ function M.process_message(message)
   -- Get context
   local context = M.build_context()
 
-  -- Send with rate limiting
-  async_manager.rate_limited_request(
-    config.get('provider'),
+  -- Send with retry logic
+  local retry_manager = require('todo-ai.retry_manager')
+  retry_manager.execute_with_retry_async(
     function(callback)
       provider.chat_async(
         chat_manager.get_recent_messages(8000),  -- Recent messages with token limit
@@ -325,6 +324,8 @@ function M.process_message(message)
         callback
       )
     end,
+    config.get('provider') or 'chat',
+    nil, -- Use default retry config
     function(response, error)
       chat_manager.hide_thinking()
       M.state.waiting_for_response = false

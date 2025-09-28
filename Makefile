@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-all lint install clean
+.PHONY: test test-unit test-integration test-all lint install clean docs docs-update-readme
 
 # Default target
 all: install
@@ -11,7 +11,7 @@ install:
 # Run all tests (Plenary)
 test:
 	@echo "Running Plenary tests..."
-	@bash tests/run_plenary_tests.sh
+	@nvim --headless --noplugin -l tests/run_tests.lua 2>&1 | grep -v "^Test environment" | tail -100
 
 # Alias for backwards compatibility
 test-plenary: test
@@ -43,16 +43,21 @@ dev:
 	@./dev-setup.sh
 
 
-# Generate documentation
+# Generate API documentation (always runs)
 docs:
-	@echo "Generating documentation..."
-	@mkdir -p docs
-	@echo "# Todo-AI Plugin Documentation\n" > docs/API.md
-	@echo "## Modules\n" >> docs/API.md
-	@for file in lua/todo-ai/*.lua; do \
-		echo "### $$(basename $$file .lua)" >> docs/API.md; \
-		grep -E "^function M\." $$file | sed 's/function M\./- /g' >> docs/API.md || true; \
-		echo "" >> docs/API.md; \
+	@echo "Generating API documentation..."
+	@rm -rf docs/api
+	@lua scripts/generate_docs.lua lua/todo-ai docs/api
+
+# Update README with API docs links
+docs-update-readme: docs
+	@echo "Updating README with API documentation links..."
+	@echo "\n## API Documentation\n" >> README.md
+	@echo "Auto-generated API documentation from LuaLS annotations:\n" >> README.md
+	@find docs/api -name "*.md" | sort | while read file; do \
+		name=$$(basename $$file .md); \
+		path=$$file; \
+		echo "- [$$name]($$path)" >> README.md; \
 	done
 
 # Check dependencies
