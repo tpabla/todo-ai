@@ -1,7 +1,6 @@
 -- Compact project context generator with compression
 local M = {}
 
-local utils = require('todo-ai.utils')
 local logger = require('todo-ai.logger')
 
 M.context_file = '.todoai/context.md'
@@ -244,40 +243,162 @@ function M.get_dependency_summary()
 end
 
 -- Generate full context with human section
+-- Scan project for tagged reusable functions and patterns
+function M.scan_for_functions()
+  local hints = {}
+  local cwd = vim.fn.getcwd()
+
+  -- Define reusable function tags with their meanings
+  local reuse_tags = {
+    ["# DRY:"] = "Reusable function",
+    ["# UTIL:"] = "Utility function",
+    ["# HELPER:"] = "Helper function",
+    ["# PATTERN:"] = "Reusable pattern",
+    ["# COMMON:"] = "Common functionality",
+    ["# SHARED:"] = "Shared component"
+  }
+
+  -- Find source files and scan for tagged functions
+  local source_patterns = {
+    "*.py", "*.js", "*.ts", "*.lua", "*.go", "*.rs", "*.java", "*.cpp", "*.c", "*.rb", "*.php", "*.swift"
+  }
+
+  local tagged_functions = {}
+  local regular_functions = {}
+
+  for _, pattern in ipairs(source_patterns) do
+    local cmd = string.format("find %s -name '%s' -type f 2>/dev/null | head -20", cwd, pattern)
+    local files = vim.fn.systemlist(cmd)
+
+    for _, file in ipairs(files) do
+      if vim.fn.filereadable(file) == 1 then
+        local content = vim.fn.readfile(file)
+        local filename = vim.fn.fnamemodify(file, ':t')
+        local rel_path = vim.fn.fnamemodify(file, ':.')
+
+        for i, line in ipairs(content) do
+          -- Check for reusability tags first
+          local tag_found = false
+          for tag, description in pairs(reuse_tags) do
+            if line:match(vim.pesc(tag)) then
+              local tag_content = line:match(vim.pesc(tag) .. "%s*(.*)")
+              -- Look for function definition in next few lines
+              for j = i + 1, math.min(i + 3, #content) do
+                local func_name = M.extract_function_name(content[j])
+                if func_name then
+                  table.insert(tagged_functions, {
+                    name = func_name,
+                    file = rel_path,
+                    line = j,
+                    tag = tag,
+                    description = tag_content or description,
+                    priority = 1 -- Tagged functions get priority
+                  })
+                  tag_found = true
+                  break
+                end
+              end
+              break
+            end
+          end
+
+          -- If no tag found, check if this line has a function
+          if not tag_found then
+            local func_name = M.extract_function_name(line)
+            if func_name and not func_name:match("^_") and #regular_functions < 5 then
+              table.insert(regular_functions, {
+                name = func_name,
+                file = filename,
+                line = i,
+                priority = 2 -- Lower priority for untagged
+              })
+            end
+          end
+        end
+      end
+    end
+  end
+
+  -- Generate hints - prioritize tagged functions
+  if #tagged_functions > 0 then
+    table.insert(hints, "### Tagged for Reuse")
+    for _, func in ipairs(tagged_functions) do
+      table.insert(hints, string.format("- `%s()` - %s (%s:%d)",
+        func.name, func.description, func.file, func.line))
+    end
+    table.insert(hints, "")
+  end
+
+  if #regular_functions > 0 and #tagged_functions < 5 then
+    table.insert(hints, "### Other Functions")
+    for _, func in ipairs(regular_functions) do
+      table.insert(hints, string.format("- `%s()` in %s:%d",
+        func.name, func.file, func.line))
+    end
+    table.insert(hints, "")
+  end
+
+  return hints
+end
+
+-- Extract function name from a line (language-agnostic)
+function M.extract_function_name(line)
+  -- Python: def function_name(
+  local func_name = line:match("def%s+([%w_]+)%s*%(")
+
+  -- JavaScript/TypeScript: function name( or name = function( or name: function(
+  if not func_name then
+    func_name = line:match("function%s+([%w_]+)%s*%(") or
+               line:match("([%w_]+)%s*=%s*function%s*%(") or
+               line:match("([%w_]+)%s*:%s*function%s*%(") or
+               line:match("([%w_]+)%s*=%s*%([^)]*%)%s*=>") -- Arrow functions
+  end
+
+  -- Go: func name(
+  if not func_name then
+    func_name = line:match("func%s+([%w_]+)%s*%(")
+  end
+
+  -- Lua: function name( or M.name = function(
+  if not func_name then
+    func_name = line:match("function%s+([%w_.]+)%s*%(") or
+               line:match("([%w_.]+)%s*=%s*function%s*%(")
+  end
+
+  -- Rust: fn name(
+  if not func_name then
+    func_name = line:match("fn%s+([%w_]+)%s*%(")
+  end
+
+  -- C/C++/Java: type name( (basic pattern)
+  if not func_name then
+    func_name = line:match("%w+%s+([%w_]+)%s*%(")
+  end
+
+  -- PHP: function name(
+  if not func_name then
+    func_name = line:match("function%s+([%w_]+)%s*%(")
+  end
+
+  return func_name
+end
+
 -- Get DRY (Don't Repeat Yourself) hints - reusable functions
 function M.get_dry_hints()
   local hints = {}
 
-  -- Common utility functions that should be reused
+  -- Scan current project for reusable functions
   table.insert(hints, "## REUSABLE FUNCTIONS (DRY)")
   table.insert(hints, "")
-  table.insert(hints, "### Validation & Sanitization")
-  table.insert(hints, "- `todo-ai.utils.validate_buffer(bufnr)` - Validate buffer exists and is valid")
-  table.insert(hints, "- `todo-ai.utils.validate_json(str)` - Safe JSON parsing with error handling")
-  table.insert(hints, "- `todo-ai.utils.sanitize_path(path)` - Clean and validate file paths")
-  table.insert(hints, "- `todo-ai.llm_validator.*` - All LLM response validation functions")
-  table.insert(hints, "- `command_executor.execute_*` - Safe command execution with Plenary")
-  table.insert(hints, "")
 
-  table.insert(hints, "### Async Operations")
-  table.insert(hints, "- `retry_manager.execute_with_retry_async()` - Resilient API calls")
-  table.insert(hints, "- `command_executor.execute_async()` - Non-blocking command execution")
-  table.insert(hints, "- `http_client.request_async()` - HTTP requests with Plenary")
-  table.insert(hints, "")
-
-  table.insert(hints, "### Configuration")
-  table.insert(hints, "- `todo-ai.config_manager.get(key)` - Get config values")
-  table.insert(hints, "- `todo-ai.config_manager.set(key, value)` - Set config values")
-  table.insert(hints, "")
-
-  table.insert(hints, "### Logging")
-  table.insert(hints, "- `todo-ai.logger.debug/info/warn/error()` - Structured logging")
-  table.insert(hints, "- `todo-ai.logger.timer(context)` - Performance tracking")
-  table.insert(hints, "")
-
-  table.insert(hints, "### Chat & Context")
-  table.insert(hints, "- `todo-ai.chat_manager.add_message()` - Manage conversation")
-  table.insert(hints, "- `todo-ai.context_compact.get_for_prompt()` - Get project context")
+  local function_hints = M.scan_for_functions()
+  if #function_hints > 0 then
+    for _, hint in ipairs(function_hints) do
+      table.insert(hints, hint)
+    end
+  else
+    table.insert(hints, "*No significant reusable functions detected in current project*")
+  end
   table.insert(hints, "")
 
   table.insert(hints, "### Common Patterns to Reuse")
@@ -290,7 +411,7 @@ function M.get_dry_hints()
   table.insert(hints, "end")
   table.insert(hints, "")
   table.insert(hints, "-- Buffer validation pattern")
-  table.insert(hints, "local valid, err = utils.validate_buffer(bufnr)")
+  table.insert(hints, "local valid, err = vim.api.nvim_buf_is_valid(bufnr)")
   table.insert(hints, "if not valid then return false, err end")
   table.insert(hints, "")
   table.insert(hints, "-- Async API call pattern")

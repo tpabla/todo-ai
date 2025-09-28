@@ -19,21 +19,9 @@ function M.execute_async(cmd, opts, callback)
 
 **Parameters:**
 
+- `cmd` (string[]): Command array
+- `callback` (function(success:): boolean, output: string|nil, error: string|nil)
 - `opts` (table): Options
-- `cmd` (string[]): Command array
-- `callback` (function(success:): boolean, output: string|nil, error: string|nil)
-
-### M.execute
-
-```lua
-function M.execute(cmd, opts, callback)
-```
-
-**Parameters:**
-
-- `opts` (table): Options {timeout: number, cwd: string}
-- `cmd` (string[]): Command array
-- `callback` (function(success:): boolean, output: string|nil, error: string|nil)
 
 ### M.execute_sync
 
@@ -43,9 +31,21 @@ function M.execute_sync(cmd, opts)
 
 **Parameters:**
 
-- `opts?` (table): Options
 - `cmd` (string[]): Command array
+- `opts?` (table): Options
 
 **Returns:**
 
 - boolean success, string|nil output, string|nil error
+
+### M.execute
+
+```lua
+function M.execute(cmd, opts, callback)
+```
+
+**Parameters:**
+
+- `cmd` (string[]): Command array
+- `callback` (function(success:): boolean, output: string|nil, error: string|nil)
+- `opts` (table): Options {timeout: number, cwd: string}

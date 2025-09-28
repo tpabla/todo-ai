@@ -69,6 +69,7 @@ User Input → Parser → Context Builder → LLM Provider → Response Validato
     { "<leader>ts", desc = "Scan TODOs" },
     { "<leader>tc", desc = "Open AI Chat" },
     { "<leader>tg", desc = "Generate Context" },
+    { "<leader>td", desc = "Suggest DRY Tags" },
     { "<leader>ta", desc = "Accept Changes" },
     { "<leader>tr", desc = "Reject Changes" },
   },
@@ -135,6 +136,14 @@ require('todo-ai').setup({
   floating_window = true,
   chat_window_width = 80,
 
+  -- @ai highlighting
+  ai_highlight = {
+    enabled = true,        -- Enable @ai tag highlighting
+    fg = '#ff79c6',       -- Neon pink (default cyberpunk color)
+    bg = '#1a1a2e',       -- Dark background
+    bold = true,          -- Bold styling
+  },
+
   -- Features
   auto_scan_on_save = true,
   auto_generate_context = false,
@@ -149,6 +158,49 @@ require('todo-ai').setup({
     claude = { max_requests = 5, window_seconds = 60 },
     openai = { max_requests = 20, window_seconds = 60 },
   },
+
+  -- Optional integrations (enhance existing plugins)
+  integrations = {
+    todo_comments = {
+      enabled = true,      -- Enable if todo-comments.nvim is installed
+      auto_setup = true,   -- Automatically add DRY tag highlighting
+      custom_keywords = {  -- Add your own DRY tags
+        REFACTOR = { icon = "♻️", color = "info" },
+        EXTRACT = { icon = "🔬", color = "warning" },
+      },
+    },
+  },
+})
+```
+
+### 🔗 Optional Plugin Integrations
+
+TodoAI enhances plugins you may already have installed:
+
+#### todo-comments.nvim Integration
+If you have `folke/todo-comments.nvim`, TodoAI automatically adds highlighting for DRY tags:
+
+**Default DRY Tags:**
+- `# DRY:` 🔄 - Reusable function
+- `# UTIL:` 🔧 - Utility function
+- `# HELPER:` 🤝 - Helper function
+- `# PATTERN:` 🎯 - Reusable pattern
+- `# COMMON:` 🌟 - Common functionality
+- `# SHARED:` 🔗 - Shared component
+
+**Usage:**
+```python
+# DRY: Email validation that can be reused across forms
+def validate_email(email):
+    return re.match(r'^[^@]+@[^@]+\.[^@]+$', email) is not None
+```
+
+**Disable integration:**
+```lua
+require('todo-ai').setup({
+  integrations = {
+    todo_comments = { enabled = false }
+  }
 })
 ```
 
@@ -161,11 +213,13 @@ require('todo-ai').setup({
 def fetch_data(url):
     return requests.get(url).json()
 
-# @ai: Optimize this function for performance
+# TODO: @ai Optimize this function for performance
 def process_items(items):
     # Press <leader>ts to scan and resolve
     pass
 ```
+
+**@ai Tag Highlighting**: The `@ai` tag is automatically highlighted in neon pink to make AI-processable TODOs easily visible. This works independently of todo-comments.nvim and can be customized in your configuration.
 
 ### Interactive Chat
 

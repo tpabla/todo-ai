@@ -46,8 +46,8 @@ dev:
 # Generate API documentation (always runs)
 docs:
 	@echo "Generating API documentation..."
-	@rm -rf docs/api
-	@lua scripts/generate_docs.lua lua/todo-ai docs/api
+	@rm -rf $(CURDIR)/docs/api
+	@cd $(CURDIR) && lua scripts/generate_docs.lua lua/todo-ai docs/api
 
 # Update README with API docs links
 docs-update-readme: docs

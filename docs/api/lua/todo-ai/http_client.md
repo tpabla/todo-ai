@@ -11,6 +11,18 @@ HttpClient
 
 ## Functions
 
+### M.request_async
+
+```lua
+function M.request_async(url, opts, callback)
+```
+
+**Parameters:**
+
+- `callback` (function(response:): table|nil, error: string|nil)
+- `url` (string): 
+- `opts` (table): 
+
 ### M.request
 
 ```lua
@@ -34,21 +46,9 @@ function M.request_async_with_retry(url, opts, callback)
 
 **Parameters:**
 
-- `opts` (table): 
 - `callback` (function(success:): boolean, result: any)
 - `url` (string): 
-
-### M.request_async
-
-```lua
-function M.request_async(url, opts, callback)
-```
-
-**Parameters:**
-
 - `opts` (table): 
-- `callback` (function(response:): table|nil, error: string|nil)
-- `url` (string): 
 
 ### M.request_with_retry
 

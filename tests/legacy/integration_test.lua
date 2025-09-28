@@ -139,7 +139,7 @@ runner.suite('Integration', {
   end,
 
   ['test_diff_module'] = function()
-    local diff = require('lua.todo-ai.diff')
+    local diff = require('todo-ai.diff_mini')
     assert_not_nil(diff)
 
     -- Test state initialization

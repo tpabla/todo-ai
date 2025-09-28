@@ -1,6 +1,5 @@
 # retry_manager
 
-Retry manager with exponential backoff
 @class RetryManager
 
 ## Class: RetryManager
@@ -9,74 +8,40 @@ Retry manager with exponential backoff
 RetryManager
 ```
 
-### Fields
-
-- **max_retries** (`number`): Maximum number of retry attempts
-- **base_delay** (`number`): Base delay in milliseconds
-- **max_delay** (`number`): Maximum delay in milliseconds
-- **exponential_base** (`number`): Base for exponential backoff (typically 2)
-- **jitter** (`boolean`): Add random jitter to prevent thundering herd
-
-## Class: RetryConfig
-
-```lua
-RetryConfig
-```
-
-### Fields
-
-- **max_retries** (`number`): Maximum number of retry attempts
-- **base_delay** (`number`): Base delay in milliseconds
-- **max_delay** (`number`): Maximum delay in milliseconds
-- **exponential_base** (`number`): Base for exponential backoff (typically 2)
-- **jitter** (`boolean`): Add random jitter to prevent thundering herd
-
 ## Functions
 
 ### M.execute_with_retry_async
 
 ```lua
-function M.execute_with_retry_async(fn, service_name, config, callback)
+function M.execute_with_retry_async(fn, service_name, opts, callback)
 ```
 
 **Parameters:**
 
-- `service_name` (string): Name of the service
-- `fn` (function): The async function to execute (takes callback)
-- `config?` (RetryConfig): Optional retry configuration
-- `callback` (function(success:): boolean, result: any)
+- `callback` (function): Final callback(success, result)
+- `error_msg` (string): 
+- `attempt` (number): 
+- `service_name` (string): Service name for logging
+- `fn` (function): Function that takes a callback(success, result)
+- `opts` (table?): Ignored (for compatibility)
+
+**Returns:**
+
+- boolean
+- number
 
 ### M.execute_with_retry
 
 ```lua
-function M.execute_with_retry(fn, service_name, config)
+function M.execute_with_retry(fn, service_name, opts)
 ```
 
 **Parameters:**
 
-- `service_name` (string): Name of the service (for circuit breaker)
-- `config?` (RetryConfig): Optional retry configuration
-- `attempt` (number): Current attempt (0-indexed)
-- `fn` (function): The function to execute
-- `config` (RetryConfig): 
-- `error_message` (string): 
+- `service_name` (string): Service name for logging
+- `fn` (function): Function to execute
+- `opts` (table?): Ignored (for compatibility)
 
 **Returns:**
 
-- number delay_ms
-- boolean
-- boolean success, any result_or_error
-
-### M.get_stats
-
-```lua
-function M.get_stats(service_name)
-```
-
-**Parameters:**
-
-- `service_name` (string): 
-
-**Returns:**
-
-- table
+- boolean success, any result

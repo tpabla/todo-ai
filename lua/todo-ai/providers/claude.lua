@@ -1,107 +1,14 @@
 local M = {}
 local providers = require('todo-ai.providers')
 local parser = require('todo-ai.parser')
+local config = require('todo-ai.config')
+local prompt_builder = require('todo-ai.prompt_builder')
 
 M.api_key = vim.env.ANTHROPIC_API_KEY
 M.api_url = 'https://api.anthropic.com/v1/messages'
 M.default_model = 'claude-3-5-sonnet-20241022' -- Latest Claude 3.5 Sonnet
 
--- System prompt for all Claude interactions
-function M.get_system_prompt()
-  local schema = require('todo-ai.schema')
-  return string.format([[
-You are a code assistant integrated into Neovim. You must ALWAYS respond with valid JSON following this schema:
-
-%s
-
-Rules:
-1. ALWAYS use the "changes" array for any code modifications to files
-2. Use "code_snippet" ONLY for showing example code in chat (won't modify files)
-3. For each change, specify exact start_line and end_line (1-indexed)
-4. The "code" field in changes should contain ONLY the replacement code
-5. Include "description" for each change explaining what it does
-6. Include overall "explanation" summarizing all changes
-7. Maintain original indentation in replaced code
-8. Escape all quotes properly for valid JSON
-9. NEVER include markdown formatting in JSON values
-10. For new files, use "new_file" with path and single change starting at line 1
-
-Examples:
-%s]],
-    schema.get_schema_description(),
-    vim.fn.json_encode(schema.examples.multiple_changes))
-end
-
-function M.build_prompt(instruction, context)
-  -- Parse context if it's JSON
-  local context_obj = nil
-  local ok, parsed = pcall(vim.fn.json_decode, context)
-  if ok then
-    context_obj = parsed
-  end
-
-  -- Build appropriate prompt based on context
-  if context_obj and context_obj.selected_text then
-    -- Visual selection mode
-    return string.format([[
-File: %s
-Language: %s
-
-Full file content:
-%s
-
-The user has selected lines %d-%d:
-```
-%s
-```
-
-Task: %s
-
-Create a "changes" array entry to replace lines %d-%d with the new implementation.]],
-      context_obj.file_path or 'unknown',
-      context_obj.language or 'unknown',
-      context_obj.file_content or '',
-      context_obj.line_number or 0,
-      context_obj.end_line or context_obj.line_number or 0,
-      context_obj.selected_text or '',
-      instruction,
-      context_obj.line_number or 0,
-      context_obj.end_line or context_obj.line_number or 0)
-  elseif context_obj and context_obj.line_number then
-    -- TODO mode - we know the line number
-    return string.format([[
-File: %s
-Language: %s
-
-Full file content:
-%s
-
-TODO at line %d: %s
-
-Context around TODO:
-%s
-
-Create a "changes" array entry to replace the TODO at line %d.]],
-      context_obj.file_path or 'unknown',
-      context_obj.language or 'unknown',
-      context_obj.file_content or '',
-      context_obj.line_number or 0,
-      instruction,
-      vim.fn.json_encode(context_obj.surrounding_lines or {}),
-      context_obj.line_number or 0)
-  else
-    -- Chat mode or general query
-    return string.format([[
-Task: %s
-
-Context:
-%s
-
-Provide appropriate response using the JSON schema. Use "code_snippet" for examples, "changes" for file modifications.]],
-      instruction,
-      context)
-  end
-end
+-- Use centralized prompt builder
 
 function M.complete(instruction, context, opts)
   opts = opts or {}
@@ -113,7 +20,7 @@ function M.complete(instruction, context, opts)
     return nil, 'ANTHROPIC_API_KEY not set'
   end
 
-  local prompt = M.build_prompt(instruction, context)
+  local prompt = prompt_builder.build_user_prompt(instruction, context)
 
   local headers = {
     ['content-type'] = 'application/json',
@@ -125,7 +32,7 @@ function M.complete(instruction, context, opts)
     model = model,
     max_tokens = max_tokens,
     temperature = temperature,
-    system = M.get_system_prompt(),
+    system = prompt_builder.get_system_prompt(),
     messages = {
       {
         role = 'user',
@@ -138,7 +45,7 @@ function M.complete(instruction, context, opts)
     method = 'POST',
     headers = headers,
     body = body,
-    timeout = 300  -- 5 minute timeout for Claude
+    timeout = config.get('timeouts').llm_request
   })
 
   if err then
@@ -165,12 +72,32 @@ function M.complete_async(instruction, context, opts, callback)
   local temperature = opts.temperature or 0.7
   local max_tokens = opts.max_tokens or 4096
 
+  -- Log request details
+  local logger = require('todo-ai.logger')
+  logger.info('claude', string.format('=== CLAUDE REQUEST START ==='))
+  logger.info('claude', string.format('Model: %s, Temperature: %.1f, Max tokens: %d', model, temperature, max_tokens))
+  logger.info('claude', string.format('Instruction length: %d chars', #instruction))
+  logger.info('claude', string.format('Context length: %d chars', #context))
+
+  -- Show user notification
+  vim.schedule(function()
+    vim.notify(string.format("📡 Sending to Claude (%s)...", model), vim.log.levels.INFO, { title = "Claude API", timeout = 3000 })
+  end)
+
   if not M.api_key then
+    logger.error('claude', 'ANTHROPIC_API_KEY not set!')
+    vim.schedule(function()
+      vim.notify("❌ ANTHROPIC_API_KEY not set!\n\nSet it in your environment:\nexport ANTHROPIC_API_KEY='your-key-here'",
+        vim.log.levels.ERROR, { title = "Claude API", timeout = 5000 })
+    end)
     callback(nil, 'ANTHROPIC_API_KEY not set')
     return
   end
 
-  local prompt = M.build_prompt(instruction, context)
+  logger.info('claude', 'API key found, building prompt...')
+
+  local prompt = prompt_builder.build_user_prompt(instruction, context)
+  logger.info('claude', string.format('Built prompt: %d chars', #prompt))
 
   local headers = {
     ['content-type'] = 'application/json',
@@ -182,7 +109,7 @@ function M.complete_async(instruction, context, opts, callback)
     model = model,
     max_tokens = max_tokens,
     temperature = temperature,
-    system = M.get_system_prompt(),
+    system = prompt_builder.get_system_prompt(),
     messages = {
       {
         role = 'user',
@@ -191,31 +118,72 @@ function M.complete_async(instruction, context, opts, callback)
     }
   })
 
+  logger.info('claude', string.format('Request body size: %d bytes', #body))
+  logger.info('claude', string.format('Sending request to: %s', M.api_url))
+
   providers.request_async(M.api_url, {
     method = 'POST',
     headers = headers,
     body = body,
-    timeout = 300  -- 5 minute timeout for Claude
-  }, function(response, err)
-    if err then
-      callback(nil, err)
+    timeout = config.get('timeouts').llm_request,
+    provider = 'claude'  -- Add provider tag for logging
+  }, function(success, result)
+    logger.info('claude', string.format('Response received - Success: %s', tostring(success)))
+
+    if not success then
+      logger.error('claude', string.format('Request failed: %s', tostring(result)))
+      vim.schedule(function()
+        vim.notify(string.format("❌ Claude request failed:\n%s", tostring(result)),
+          vim.log.levels.ERROR, { title = "Claude API", timeout = 5000 })
+      end)
+      callback(nil, result)
       return
+    end
+
+    local response = result
+
+    -- Log response structure
+    logger.info('claude', string.format('Response type: %s', type(response)))
+    if type(response) == 'table' then
+      logger.info('claude', string.format('Response keys: %s', vim.inspect(vim.tbl_keys(response))))
     end
 
     -- Check for API errors
     if response.error then
-      callback(nil, 'Claude API error: ' .. (response.error.message or vim.fn.json_encode(response.error)))
+      local error_msg = response.error.message or vim.fn.json_encode(response.error)
+      logger.error('claude', string.format('API error: %s', error_msg))
+      vim.schedule(function()
+        vim.notify(string.format("❌ Claude API error:\n%s", error_msg),
+          vim.log.levels.ERROR, { title = "Claude API", timeout = 5000 })
+      end)
+      callback(nil, 'Claude API error: ' .. error_msg)
       return
     end
 
     -- Extract content from Claude response
     if response.content and #response.content > 0 then
       local content = response.content[1].text
-      local parsed = parser.parse(content, 'claude')
-      callback(parsed, nil)
+      logger.info('claude', string.format('Got content: %d chars', #content))
+      logger.info('claude', string.format('Content preview: %s...', content:sub(1, 100)))
+
+      local parse_success, parsed = pcall(parser.parse, content, 'claude')
+      if parse_success then
+        logger.info('claude', 'Parse successful!')
+        logger.info('claude', string.format('Parsed response keys: %s', vim.inspect(vim.tbl_keys(parsed or {}))))
+        callback(parsed, nil)
+      else
+        logger.error('claude', string.format('Parse failed: %s', tostring(parsed)))
+        callback(nil, 'Parser error: ' .. tostring(parsed))
+      end
     else
+      logger.error('claude', string.format('No content in response: %s', vim.fn.json_encode(response)))
+      vim.schedule(function()
+        vim.notify("❌ No content in Claude response", vim.log.levels.ERROR, { title = "Claude API", timeout = 5000 })
+      end)
       callback(nil, 'No content in response. Full response: ' .. vim.fn.json_encode(response))
     end
+
+    logger.info('claude', '=== CLAUDE REQUEST END ===')
   end)
 end
 
@@ -258,7 +226,7 @@ function M.chat(messages, opts)
     model = model,
     max_tokens = max_tokens,
     temperature = temperature,
-    system = M.get_system_prompt(),
+    system = prompt_builder.get_system_prompt(),
     messages = claude_messages
   })
 
@@ -266,7 +234,7 @@ function M.chat(messages, opts)
     method = 'POST',
     headers = headers,
     body = body,
-    timeout = 300  -- 5 minute timeout for Claude
+    timeout = config.get('timeouts').llm_request
   })
 
   if err then
@@ -332,7 +300,7 @@ function M.chat_async(messages, opts, callback)
     model = model,
     max_tokens = max_tokens,
     temperature = temperature,
-    system = M.get_system_prompt(),
+    system = prompt_builder.get_system_prompt(),
     messages = claude_messages
   })
 
@@ -340,13 +308,14 @@ function M.chat_async(messages, opts, callback)
     method = 'POST',
     headers = headers,
     body = body,
-    timeout = 300  -- 5 minute timeout for Claude
-  }, function(response, err)
-    if err then
-      callback(nil, err)
+    timeout = config.get('timeouts').llm_request
+  }, function(success, result)
+    if not success then
+      callback(nil, result)
       return
     end
 
+    local response = result
     -- Check for API errors
     if response.error then
       callback(nil, 'Claude API error: ' .. (response.error.message or vim.fn.json_encode(response.error)))
@@ -356,11 +325,11 @@ function M.chat_async(messages, opts, callback)
     -- Extract content from Claude response
     if response.content and #response.content > 0 then
       local content = response.content[1].text
-      local parsed = parser.parse(content, 'claude')
-      if parsed.code then
+      local parse_success, parsed = pcall(parser.parse, content, 'claude')
+      if parse_success then
         callback(parsed, nil)
       else
-        callback({ content = content }, nil)
+        callback(nil, 'Parser error: ' .. tostring(parsed))
       end
     else
       callback(nil, 'No content in response. Full response: ' .. vim.fn.json_encode(response))

@@ -1,34 +1,20 @@
 local M = {}
 local providers = require('todo-ai.providers')
 local parser = require('todo-ai.parser')
+local config = require('todo-ai.config')
+local prompt_builder = require('todo-ai.prompt_builder')
 
 M.api_url = vim.env.OLLAMA_URL or 'http://localhost:11434'
 M.default_model = 'llama3.2' -- User can specify any model name
 
-function M.build_prompt(instruction, context)
-  return string.format([[
-You are a helpful coding assistant. Complete the following task.
-
-Task: %s
-
-Context:
-%s
-
-Provide ONLY the code implementation to replace the TODO comment. Do not include any explanations, comments, or markdown formatting. Just the raw code.
-
-Example response for "write a hello world function":
-def hello_world():
-    print("Hello, world!")
-
-Now provide the code for the task above:]], instruction, context)
-end
+-- Ollama doesn't support system prompts, so combine them
 
 function M.complete(instruction, context, opts)
   opts = opts or {}
   local model = opts.model or M.default_model
   local temperature = opts.temperature or 0.7
 
-  local prompt = M.build_prompt(instruction, context)
+  local prompt = prompt_builder.build_combined_prompt(instruction, context)
 
   local headers = {
     ['content-type'] = 'application/json'
@@ -45,7 +31,7 @@ function M.complete(instruction, context, opts)
     method = 'POST',
     headers = headers,
     body = body,
-    timeout = 60  -- Ollama can be slow
+    timeout = config.get('timeouts').llm_request
   })
 
   if err then
@@ -65,7 +51,7 @@ function M.complete_async(instruction, context, opts, callback)
   local model = opts.model or M.default_model
   local temperature = opts.temperature or 0.7
 
-  local prompt = M.build_prompt(instruction, context)
+  local prompt = prompt_builder.build_combined_prompt(instruction, context)
 
   local headers = {
     ['content-type'] = 'application/json'
@@ -82,7 +68,7 @@ function M.complete_async(instruction, context, opts, callback)
     method = 'POST',
     headers = headers,
     body = body,
-    timeout = 60
+    timeout = config.get('timeouts').llm_request
   }, function(response, err)
     if err then
       callback(nil, err)
@@ -127,7 +113,7 @@ function M.chat(messages, opts)
     method = 'POST',
     headers = headers,
     body = body,
-    timeout = 60
+    timeout = config.get('timeouts').llm_request
   })
 
   if err then
@@ -177,7 +163,7 @@ function M.chat_async(messages, opts, callback)
     method = 'POST',
     headers = headers,
     body = body,
-    timeout = 60
+    timeout = config.get('timeouts').llm_request
   }, function(response, err)
     if err then
       callback(nil, err)
@@ -202,7 +188,7 @@ end
 function M.is_available()
   local response, err = providers.request(M.api_url .. '/api/tags', {
     method = 'GET',
-    timeout = 5
+    timeout = config.get('timeouts').health_check
   })
   return response ~= nil and err == nil
 end

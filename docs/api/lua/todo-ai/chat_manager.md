@@ -5,34 +5,6 @@
 @field MAX_MESSAGES number Maximum messages to keep in memory
 @field MAX_MESSAGE_LENGTH number Maximum length per message
 
-## Class: ChatState
-
-```lua
-ChatState
-```
-
-### Fields
-
-- **state** (`ChatState`): 
-- **MAX_MESSAGES** (`number`): Maximum messages to keep in memory
-- **MAX_MESSAGE_LENGTH** (`number`): Maximum length per message
-- **messages** (`Message[]`): 
-- **input_buf** (`number|nil`): 
-- **display_buf** (`number|nil`): 
-- **win** (`number|nil`): 
-- **thinking_timer** (`number|nil`): 
-- **thinking_frame** (`number`): 
-- **thinking_line_num** (`number|nil`): 
-- **edit_queue** (`Edit[]`): 
-- **current_edit_index** (`number`): 
-- **edit_preview_buf** (`number|nil`): 
-- **message_count** (`number`): 
-- **total_tokens** (`number`): 
-- **role** (`string`): 'user'|'ai'|'system'
-- **content** (`string`): 
-- **timestamp** (`number`): 
-- **token_estimate** (`number`): 
-
 ## Class: ChatManager
 
 ```lua
@@ -89,33 +61,57 @@ Message
 - **timestamp** (`number`): 
 - **token_estimate** (`number`): 
 
+## Class: ChatState
+
+```lua
+ChatState
+```
+
+### Fields
+
+- **state** (`ChatState`): 
+- **MAX_MESSAGES** (`number`): Maximum messages to keep in memory
+- **MAX_MESSAGE_LENGTH** (`number`): Maximum length per message
+- **messages** (`Message[]`): 
+- **input_buf** (`number|nil`): 
+- **display_buf** (`number|nil`): 
+- **win** (`number|nil`): 
+- **thinking_timer** (`number|nil`): 
+- **thinking_frame** (`number`): 
+- **thinking_line_num** (`number|nil`): 
+- **edit_queue** (`Edit[]`): 
+- **current_edit_index** (`number`): 
+- **edit_preview_buf** (`number|nil`): 
+- **message_count** (`number`): 
+- **total_tokens** (`number`): 
+- **role** (`string`): 'user'|'ai'|'system'
+- **content** (`string`): 
+- **timestamp** (`number`): 
+- **token_estimate** (`number`): 
+
 ## Functions
-
-### M.render_messages
-
-```lua
-function M.render_messages(max_lines)
-```
-
-**Parameters:**
-
-- `max_lines` (number|nil): 
-
-**Returns:**
-
-- string[]
-
-### M.update_display
-
-```lua
-function M.update_display()
-```
 
 ### M.cleanup_old_messages
 
 ```lua
 function M.cleanup_old_messages()
 ```
+
+### M.add_message
+
+```lua
+function M.add_message(role, content)
+```
+
+**Parameters:**
+
+- `content` (string): 
+- `role` (string): 
+
+**Returns:**
+
+- number
+- boolean success
 
 ### M.show_thinking
 
@@ -127,10 +123,22 @@ function M.show_thinking(model)
 
 - `model` (string|nil): 
 
+### M.clear
+
+```lua
+function M.clear()
+```
+
 ### M.hide_thinking
 
 ```lua
 function M.hide_thinking()
+```
+
+### M.update_display
+
+```lua
+function M.update_display()
 ```
 
 ### M.get_stats
@@ -142,28 +150,6 @@ function M.get_stats()
 **Returns:**
 
 - table
-
-### M.clear
-
-```lua
-function M.clear()
-```
-
-### M.add_message
-
-```lua
-function M.add_message(role, content)
-```
-
-**Parameters:**
-
-- `role` (string): 
-- `content` (string): 
-
-**Returns:**
-
-- number
-- boolean success
 
 ### M.get_recent_messages
 
@@ -178,6 +164,20 @@ function M.get_recent_messages(max_tokens)
 **Returns:**
 
 - Message[]
+
+### M.render_messages
+
+```lua
+function M.render_messages(max_lines)
+```
+
+**Parameters:**
+
+- `max_lines` (number|nil): 
+
+**Returns:**
+
+- string[]
 
 ### M.cleanup_by_tokens
 

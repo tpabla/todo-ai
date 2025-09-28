@@ -26,12 +26,53 @@ M.defaults = {
     chat_window_width = 60,
     chat_window_position = 'right', -- 'right', 'left', 'bottom'
     highlight_todos = true,
+
+    -- @ai highlighting settings
+    ai_highlight = {
+        enabled = true,
+        fg = '#ff79c6',      -- Neon pink (cyberpunk)
+        bg = '#1a1a2e',      -- Dark background
+        bold = true,
+    },
+
+    -- Retry settings for API calls
+    retry = {
+        max_attempts = 3,
+        base_delay = 1000,      -- milliseconds
+        exponential_base = 2,
+        max_delay = 30000,
+        jitter = true,
+    },
+
+    -- HTTP request timeouts (in milliseconds)
+    timeouts = {
+        llm_request = 300000,  -- 5 minutes for LLM API requests
+        health_check = 5000,   -- 5 seconds for health checks
+        default = 30000,       -- 30 seconds default timeout
+    },
+
+    -- Integration settings
+    integrations = {
+        todo_comments = {
+            enabled = true,
+            auto_setup = true,  -- Automatically configure todo-comments if available
+            custom_keywords = {}, -- User can add custom DRY tag keywords here
+        },
+        render_markdown = {
+            enabled = true,
+        }
+    }
 }
 
 M.config = {}
 
 function M.setup(opts)
     M.config = vim.tbl_deep_extend('force', M.defaults, opts or {})
+
+    -- Ensure timeouts exist even if not provided
+    if not M.config.timeouts then
+        M.config.timeouts = M.defaults.timeouts
+    end
 
     -- Try to get API keys from environment if not provided
     if not M.config.api_key then

@@ -10,15 +10,16 @@ Logger
 
 ## Functions
 
-### M.warn
+### M.debug
 
 ```lua
-function M.warn(context, data)
+function M.debug(context, data)
 ```
 
 **Parameters:**
 
 - `data` (any): 
+- `level` (string): 
 - `context` (string): 
 
 ### M.info
@@ -42,6 +43,16 @@ function M.init(config)
 
 - `config` (table|nil): 
 
+### M.set_level
+
+```lua
+function M.set_level(level)
+```
+
+**Parameters:**
+
+- `level` (string): 
+
 ### M.error
 
 ```lua
@@ -53,24 +64,13 @@ function M.error(context, data)
 - `data` (any): 
 - `context` (string): 
 
-### M.set_level
+### M.warn
 
 ```lua
-function M.set_level(level)
+function M.warn(context, data)
 ```
 
 **Parameters:**
 
-- `level` (string): 
-
-### M.debug
-
-```lua
-function M.debug(context, data)
-```
-
-**Parameters:**
-
-- `level` (string): 
 - `data` (any): 
 - `context` (string): 

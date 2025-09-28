@@ -5,6 +5,7 @@ local M = {}
 local curl = require('plenary.curl')
 local retry_manager = require('todo-ai.retry_manager')
 local logger = require('todo-ai.logger')
+local config = require('todo-ai.config')
 
 ---Make HTTP request with Plenary's curl
 ---@param url string
@@ -19,7 +20,7 @@ function M.request(url, opts)
     method = opts.method or 'GET',
     headers = opts.headers or {},
     body = opts.body,
-    timeout = opts.timeout or 30000,
+    timeout = opts.timeout or config.get('timeouts').default,
     raw = {'-L', '--max-redirs', '5'},  -- Follow redirects
   }
 
@@ -57,8 +58,7 @@ function M.request_with_retry(url, opts)
       end
       return result
     end,
-    service_name,
-    opts.retry_config
+    service_name
   )
 end
 
@@ -69,22 +69,39 @@ end
 function M.request_async(url, opts, callback)
   opts = opts or {}
 
+  -- Log request start
+  logger.info('http_client', string.format('Request: %s %s', opts.method or 'GET', url))
+  if opts.provider then
+    logger.info('http_client', string.format('Provider: %s', opts.provider))
+  end
+  if opts.body then
+    logger.info('http_client', string.format('Body size: %d bytes', #opts.body))
+  end
+
   -- Build curl options
   local curl_opts = {
     url = url,
     method = opts.method or 'GET',
     headers = opts.headers or {},
     body = opts.body,
-    timeout = opts.timeout or 30000,
+    timeout = opts.timeout or config.get('timeouts').default,
     callback = function(response)
       vim.schedule(function()
+        logger.info('http_client', string.format('Response - Exit: %s, Status: %s',
+          tostring(response.exit), tostring(response.status)))
+
         if response.exit ~= 0 then
-          callback(nil, "Curl failed: " .. tostring(response.exit))
+          local error_msg = "Curl failed: " .. tostring(response.exit)
+          logger.error('http_client', error_msg)
+          callback(nil, error_msg)
         elseif response.status >= 200 and response.status < 300 then
+          logger.info('http_client', string.format('Success - Body size: %d bytes', #(response.body or "")))
           local ok, data = pcall(vim.fn.json_decode, response.body)
           callback(ok and data or response.body, nil)
         else
-          callback(nil, string.format('HTTP %d: %s', response.status, response.body))
+          local error_msg = string.format('HTTP %d: %s', response.status, response.body)
+          logger.error('http_client', error_msg)
+          callback(nil, error_msg)
         end
       end)
     end,
@@ -109,7 +126,7 @@ function M.request_async_with_retry(url, opts, callback)
       end)
     end,
     service_name,
-    opts.retry_config,
+    nil,
     callback
   )
 end

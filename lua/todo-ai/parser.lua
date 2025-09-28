@@ -317,9 +317,13 @@ function M.parse_json_response(response, result)
     return
   end
 
-  -- Handle new schema format
+  -- Handle new schema format (optimized)
   if data.changes then
     result.changes = data.changes
+  end
+
+  if data.edits then
+    result.edits = data.edits
   end
 
   if data.code_snippet then

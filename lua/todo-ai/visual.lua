@@ -199,7 +199,7 @@ function M.process_visual_selection()
 
       -- Display diff for the selected region
       if response.changes and #response.changes > 0 then
-        local diff = require('todo-ai.diff')
+        local diff = require('todo-ai.diff_mini')
 
         -- Visual selection uses changes format
         local change = response.changes[1]

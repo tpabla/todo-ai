@@ -33,15 +33,27 @@ function M.check_dependencies()
         })
       end,
       optional = false,
-    }
+    },
+    -- mini.diff removed - using native Neovim diff functionality instead
   }
 
   local missing = {}
 
   for _, dep in ipairs(deps) do
-    local ok = pcall(require, dep.name:match('([^.]+)'))
+    -- For mini modules, require the specific module
+    local module_name = dep.name
+    if dep.name:match('^mini%.') then
+      module_name = dep.name  -- Use full mini.diff name
+    else
+      module_name = dep.name:match('([^.]+)')  -- Extract first part for others
+    end
+
+    local ok = pcall(require, module_name)
     if not ok and not dep.optional then
       table.insert(missing, dep)
+    elseif ok and dep.config then
+      -- Run the setup config if the module exists
+      dep.config()
     end
   end
 
@@ -69,8 +81,20 @@ function M.suggest_installation(missing)
     table.insert(lines, 'Add to your lazy.nvim config:')
     table.insert(lines, '')
     for _, dep in ipairs(missing) do
-      table.insert(lines, string.format("  { '%s' },", dep.repo))
+      if dep.name == 'mini.diff' then
+        -- Special handling for mini.nvim modules
+        table.insert(lines, "  {")
+        table.insert(lines, string.format("    '%s',", dep.repo))
+        table.insert(lines, "    config = function()")
+        table.insert(lines, "      require('mini.diff').setup()")
+        table.insert(lines, "    end,")
+        table.insert(lines, "  },")
+      else
+        table.insert(lines, string.format("  { '%s' },", dep.repo))
+      end
     end
+    table.insert(lines, '')
+    table.insert(lines, 'Then run :Lazy install')
   elseif vim.fn.exists(':Packer') > 0 then
     -- Packer
     table.insert(lines, 'Add to your packer config:')

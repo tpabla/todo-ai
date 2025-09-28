@@ -325,22 +325,22 @@ function M.process_message(message)
       )
     end,
     config.get('provider') or 'chat',
-    nil, -- Use default retry config
-    function(response, error)
+    nil,
+    function(success, result)
       chat_manager.hide_thinking()
       M.state.waiting_for_response = false
 
-      if error then
-        vim.notify("Error: " .. error, vim.log.levels.ERROR)
-        M.add_response("Error: " .. error)
+      if not success then
+        vim.notify("Error: " .. result, vim.log.levels.ERROR)
+        M.add_response("Error: " .. result)
       else
-        local content = response.content or response.explanation or "No response"
+        local content = result.content or result.explanation or "No response"
         chat_manager.add_message('ai', content)
         M.add_response(content)
 
         -- Handle code changes if present
-        if response.changes then
-          M.handle_code_changes(response.changes)
+        if result.changes then
+          M.handle_code_changes(result.changes)
         end
       end
     end
@@ -420,7 +420,7 @@ end
 ---Handle code changes from AI
 ---@param changes table[]
 function M.handle_code_changes(changes)
-  local diff = require('todo-ai.diff')
+  local diff = require('todo-ai.diff_mini')
   local init = require('todo-ai.init')
 
   if #changes > 0 then
