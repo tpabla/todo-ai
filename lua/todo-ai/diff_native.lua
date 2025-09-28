@@ -15,7 +15,49 @@ M.state = {
   accepted_diffs = {}, -- Track which diffs are accepted (by index)
   rejected_diffs = {}, -- Track which diffs are rejected (by index)
   has_padding = false, -- Track if we added padding line
+  diagnostics_disabled = false, -- Track if we disabled diagnostics for this buffer
 }
+
+-- Disable diagnostics for cleaner diff view
+function M.disable_diagnostics(buf)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+
+  -- Use the newer API for disabling diagnostics
+  -- First try the newer vim.diagnostic.enable/disable API
+  local ok, _ = pcall(function()
+    vim.diagnostic.enable(false, { bufnr = buf })
+  end)
+
+  if not ok then
+    -- Fallback to older API if newer one doesn't exist
+    pcall(vim.diagnostic.disable, buf)
+  end
+
+  M.state.diagnostics_disabled = true
+end
+
+-- Re-enable diagnostics when diff is cleared
+function M.restore_diagnostics(buf)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+
+  if M.state.diagnostics_disabled then
+    -- Use the newer API for enabling diagnostics
+    local ok, _ = pcall(function()
+      vim.diagnostic.enable(true, { bufnr = buf })
+    end)
+
+    if not ok then
+      -- Fallback to older API if newer one doesn't exist
+      pcall(vim.diagnostic.enable, buf)
+    end
+
+    M.state.diagnostics_disabled = false
+  end
+end
 
 -- Build visual display applying accepted changes
 function M.build_search_replace_display(original_lines, changes)
@@ -81,6 +123,9 @@ function M.show_response(target_buf, response, todo_text)
   M.state.target_buf = target_buf
   M.state.response = response
   M.state.hunks = {}
+
+  -- Disable diagnostics for cleaner diff view
+  M.disable_diagnostics(target_buf)
 
   -- Get current buffer content (original)
   local lines = vim.api.nvim_buf_get_lines(target_buf, 0, -1, false)
@@ -529,6 +574,11 @@ function M.clear_diff()
   -- Clear inline diff
   M.clear_inline_diff()
 
+  -- Restore diagnostics
+  if M.state.target_buf then
+    M.restore_diagnostics(M.state.target_buf)
+  end
+
   -- Clear keymaps
   if M.state.target_buf then
     pcall(vim.keymap.del, 'n', ']]', { buffer = M.state.target_buf })
@@ -550,6 +600,8 @@ function M.clear_diff()
     diff_showing = false,
     accepted_diffs = {},
     rejected_diffs = {},
+    has_padding = false,
+    diagnostics_disabled = false,
   }
 end
 

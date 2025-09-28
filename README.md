@@ -501,7 +501,11 @@ MIT - See [LICENSE](LICENSE) file
 
 ## 🙏 Credits
 
-Built with:
+**Inspired by:**
+- [aider](https://github.com/paul-gauthier/aider) - AI pair programming in your terminal
+- [codecompanion.nvim](https://github.com/olimorris/codecompanion.nvim) - AI-powered coding assistant for Neovim
+
+**Built with:**
 - [Neovim](https://neovim.io/) - The extensible Vim-based text editor
 - [Plenary.nvim](https://github.com/nvim-lua/plenary.nvim) - Lua testing framework
 - [Claude](https://anthropic.com), [OpenAI](https://openai.com), [Ollama](https://ollama.ai) - AI providers
