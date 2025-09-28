@@ -3,8 +3,9 @@ local M = {}
 
 -- Build system prompt that all providers should use
 function M.get_system_prompt()
-  local schema = require('todo-ai.schema')
-  return schema.get_schema_description()
+  -- Use prompt_config which has the updated mode detection rules
+  local prompt_config = require('todo-ai.prompt_config')
+  return prompt_config.get_schema_description()
 end
 
 -- Build user prompt based on context
@@ -18,9 +19,29 @@ function M.build_user_prompt(instruction, context)
 
   -- Visual selection mode
   if context_obj and context_obj.selected_text and context_obj.selected_text ~= '' then
+    -- Build context information
+    local context_info = ''
+
+    -- Add project context
+    if context_obj.cached_context then
+      context_info = context_info .. '\n\nProject Context:\n' .. vim.fn.json_encode(context_obj.cached_context)
+    end
+
+    -- Add open buffers list
+    if context_obj.other_buffers and #context_obj.other_buffers > 0 then
+      context_info = context_info .. '\n\nOther Open Files:\n'
+      for _, buf in ipairs(context_obj.other_buffers) do
+        -- Support both old field names (name/type) and new field names (filename/filetype)
+        local name = buf.filename or buf.name or 'unknown'
+        local type = buf.filetype or buf.type or 'text'
+        context_info = context_info .. string.format('- %s (%s)\n', name, type)
+      end
+    end
+
     return string.format([[
 File: %s
 Language: %s
+%s
 
 Full file content:
 %s
@@ -33,6 +54,7 @@ Task: %s
 Use SEARCH/REPLACE format where "search" is the selected text and "replace" is the improved version.]],
       context_obj.file_path or 'unknown',
       context_obj.language or 'unknown',
+      context_info,
       context_obj.file_content or '',
       context_obj.line_number or 0,
       context_obj.end_line or context_obj.line_number or 0,
@@ -55,9 +77,29 @@ Use SEARCH/REPLACE format where "search" is the selected text and "replace" is t
       end
     end
 
+    -- Build context information
+    local context_info = ''
+
+    -- Add project context
+    if context_obj.cached_context then
+      context_info = context_info .. '\n\nProject Context:\n' .. vim.fn.json_encode(context_obj.cached_context)
+    end
+
+    -- Add open buffers list
+    if context_obj.other_buffers and #context_obj.other_buffers > 0 then
+      context_info = context_info .. '\n\nOther Open Files:\n'
+      for _, buf in ipairs(context_obj.other_buffers) do
+        -- Support both old field names (name/type) and new field names (filename/filetype)
+        local name = buf.filename or buf.name or 'unknown'
+        local type = buf.filetype or buf.type or 'text'
+        context_info = context_info .. string.format('- %s (%s)\n', name, type)
+      end
+    end
+
     return string.format([[
 File: %s
 Language: %s
+%s
 
 Full file content:
 %s
@@ -92,17 +134,18 @@ DIFF OPTIMIZATION GUIDELINES:
 Example for your response - use logical blocks when appropriate:]],
       context_obj.file_path or 'unknown',              -- %s #1
       context_obj.language or 'unknown',              -- %s #2
-      context_obj.file_content or '',                  -- %s #3
-      context_obj.line_number or 0,                    -- %d #4
-      instruction,                                      -- %s #5
-      indentation:gsub('\t', '\\t'),                  -- %s #6
-      #indentation,                                     -- %d #7
-      indentation:match('\t') and 'tabs' or 'spaces',  -- %s #8
-      vim.fn.json_encode(todo_line),                  -- %s #9
-      vim.fn.json_encode(context_obj.surrounding_lines or {}), -- %s #10
-      indentation:gsub('\t', '\\t'),                  -- %s #11
-      #indentation,                                     -- %d #12
-      indentation:match('\t') and 'tabs' or 'spaces') -- %s #13
+      context_info,                                    -- %s #3 (new context info)
+      context_obj.file_content or '',                  -- %s #4
+      context_obj.line_number or 0,                    -- %d #5
+      instruction,                                      -- %s #6
+      indentation:gsub('\t', '\\t'),                  -- %s #7
+      #indentation,                                     -- %d #8
+      indentation:match('\t') and 'tabs' or 'spaces',  -- %s #9
+      vim.fn.json_encode(todo_line),                  -- %s #10
+      vim.fn.json_encode(context_obj.surrounding_lines or {}), -- %s #11
+      indentation:gsub('\t', '\\t'),                  -- %s #12
+      #indentation,                                     -- %d #13
+      indentation:match('\t') and 'tabs' or 'spaces') -- %s #14
 
   -- Project scan mode
   elseif context_obj and context_obj.mode == 'project_scan' then

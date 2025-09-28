@@ -42,12 +42,30 @@ M.thinking_frames = {
 }
 
 function M.create()
-  -- Create display buffer for chat messages
-  M.state.display_buf = vim.api.nvim_create_buf(false, true)
+  -- Check if a buffer with this name already exists
+  local existing_buf = nil
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(buf) then
+      local name = vim.api.nvim_buf_get_name(buf)
+      if name:match('Todo%-AI Chat$') then
+        existing_buf = buf
+        break
+      end
+    end
+  end
 
-  -- Set buffer name first (needed for filetype detection)
-  vim.api.nvim_buf_set_name(M.state.display_buf, 'Todo-AI Chat')
+  -- Use existing buffer or create new one
+  if existing_buf then
+    M.state.display_buf = existing_buf
+  else
+    -- Create display buffer for chat messages
+    M.state.display_buf = vim.api.nvim_create_buf(false, true)
 
+    -- Set buffer name first (needed for filetype detection)
+    vim.api.nvim_buf_set_name(M.state.display_buf, 'Todo-AI Chat')
+  end
+
+  -- Always reconfigure the buffer settings
   -- Use custom filetype that inherits markdown
   vim.bo[M.state.display_buf].filetype = 'todoai-chat'
   vim.bo[M.state.display_buf].buftype = ''  -- Allow :w to work
@@ -558,191 +576,26 @@ function M.render()
   M.enable_highlighting()
   -- Keep unlocked for user editing
 
-  -- Scroll to bottom
+  -- Ensure we stay in normal mode unless user is actively editing
+  local current_win = vim.api.nvim_get_current_win()
   if M.state.win and vim.api.nvim_win_is_valid(M.state.win) then
+    if current_win ~= M.state.win then
+      -- If chat window is not focused, ensure it's in normal mode
+      vim.cmd('stopinsert')
+    end
+    -- Scroll to bottom
     vim.api.nvim_win_set_cursor(M.state.win, {#lines, 0})
   end
 end
 
 function M.send_to_backend(message)
-  local providers = require('todo-ai.providers')
-  local config = require('todo-ai.config')
-  local init = require('todo-ai.init')
+  local unified_prompt = require('todo-ai.unified_prompt')
+  local target_buf = unified_prompt.find_target_buffer()
 
-  -- Show thinking spinner with model name
-  local model = config.get('model')
-  M.show_thinking(model)
-
-  -- Get provider
-  local provider_name = config.get('provider')
-  local provider = providers.get(provider_name)
-
-  if not provider then
-    M.hide_thinking()
-    M.add_message('ai', '❌ **Error**: Provider ' .. provider_name .. ' not found')
-    return
-  end
-
-  -- Gather all open buffers context
-  local open_buffers = M.get_open_buffers_context()
-
-  -- Build context for the message
-  local context_info = {}
-  if init.state.current_todo then
-    context_info.todo = init.state.current_todo
-    context_info.pending_diff = init.state.pending_diff
-  end
-  context_info.open_buffers = open_buffers
-  context_info.current_buffer = vim.api.nvim_get_current_buf()
-
-  -- Prepare messages for chat
-  local messages = {}
-
-  -- Build comprehensive system message with schema and context
-  local prompt_builder = require('todo-ai.prompt_builder')
-  local schema = require('todo-ai.schema')
-  local context = require('todo-ai.context')
-
-  -- Create a rich context description
-  local context_description = {}
-  table.insert(context_description, schema.get_schema_description())
-  table.insert(context_description, "\n\n=== CODEBASE CONTEXT ===")
-
-  -- Load generated project context from .todoai/context.md
-  local generated_context = context.load_context()
-  if generated_context then
-    table.insert(context_description, "\n=== GENERATED PROJECT CONTEXT ===")
-    table.insert(context_description, generated_context)
-  else
-    -- If no generated context, try to get basic context
-    local basic_context = context.get_context_for_prompt()
-    if basic_context then
-      table.insert(context_description, "\n=== PROJECT CONTEXT ===")
-      table.insert(context_description, basic_context)
-    end
-  end
-
-  -- Add current buffer info
-  if context_info.current_buffer then
-    local buf = context_info.current_buffer
-    local buf_name = vim.api.nvim_buf_get_name(buf)
-    local buf_lines = vim.api.nvim_buf_get_lines(buf, 0, math.min(100, vim.api.nvim_buf_line_count(buf)), false)
-    table.insert(context_description, string.format("\n=== CURRENT FILE ===\nFile: %s", buf_name))
-    table.insert(context_description, "Content (first 100 lines):")
-    table.insert(context_description, "```" .. vim.bo[buf].filetype)
-    table.insert(context_description, table.concat(buf_lines, "\n"))
-    table.insert(context_description, "```")
-  end
-
-  -- Add open buffers summary with metadata
-  if context_info.open_buffers and #context_info.open_buffers > 0 then
-    table.insert(context_description, "\n=== OTHER OPEN FILES ===")
-    for _, buf_info in ipairs(context_info.open_buffers) do
-      local metadata = {}
-      if buf_info.has_todos then table.insert(metadata, "has TODOs") end
-      if buf_info.function_count and buf_info.function_count > 0 then
-        table.insert(metadata, buf_info.function_count .. " functions")
-      end
-      if buf_info.class_count and buf_info.class_count > 0 then
-        table.insert(metadata, buf_info.class_count .. " classes")
-      end
-      local metadata_str = #metadata > 0 and " (" .. table.concat(metadata, ", ") .. ")" or ""
-      table.insert(context_description, string.format("- %s [%s]%s",
-        buf_info.path, buf_info.filetype or "unknown", metadata_str))
-    end
-  end
-
-  -- Add TODO context if available
-  if context_info.todo then
-    table.insert(context_description, string.format("\n=== CURRENT TODO ===\n%s", context_info.todo))
-  end
-
-  -- Add system message with all context
-  table.insert(messages, {
-    role = 'system',
-    content = table.concat(context_description, "\n")
+  unified_prompt.process({
+    instruction = message,
+    bufnr = target_buf
   })
-
-  -- Add chat history
-  for _, msg in ipairs(M.state.messages) do
-    if not msg.is_thinking then
-      table.insert(messages, {
-        role = msg.role == 'ai' and 'assistant' or msg.role,
-        content = msg.content
-      })
-    end
-  end
-
-  -- Add current message
-  table.insert(messages, {
-    role = 'user',
-    content = message
-  })
-
-  -- Send chat request to provider
-  provider.chat_async(messages, {
-    model = config.get('model'),
-    temperature = config.get('temperature')
-  }, function(response, error)
-    -- Hide thinking spinner
-    M.hide_thinking()
-
-    if error then
-      M.add_message('ai', '❌ **Error**: ' .. error)
-    else
-      -- Check response mode (new dual-mode support)
-      if response.mode == "chat" then
-        -- Pure conversational response - just display the message
-        local content = response.explanation or response.content or "No response received"
-        M.add_message('ai', content)
-      elseif response.mode == "changes" or (response.changes and #response.changes > 0) then
-        -- Code changes mode - handle as before
-        -- Check if we have formatted response with thinking
-        if response.thinking_formatted then
-          -- Add thinking section
-          M.add_message('ai', response.thinking_formatted)
-        end
-
-        -- Add explanation if present
-        local content = ""
-        if response.explanation and response.explanation ~= "" then
-          content = "### 💬 Explanation\n" .. response.explanation
-        end
-
-        if content ~= "" then
-          M.add_message('ai', content)
-        end
-
-        -- Handle code changes
-        if response.changes and #response.changes > 0 then
-          local diff = require('todo-ai.diff_native')
-
-          -- Store current buffer for changes
-          local target_buf = context_info.current_buffer
-
-          -- Check if this is a new file creation
-          if response.new_file then
-            -- Create new file and apply changes
-            local content = response.changes[1].code
-            M.create_new_file(response.new_file, content)
-          elseif response.replace_buffer then
-            -- Replace entire buffer
-            local full_code = response.changes[1].code
-            diff.show_full_buffer(target_buf, full_code, response.explanation or "")
-            init.state.pending_diff = response
-            init.state.pending_diff.is_full_buffer = true
-          else
-            -- Apply multiple changes as edits
-            M.queue_changes(target_buf, response.changes, response.explanation)
-          end
-        end
-      else
-        -- Fallback for old-style responses
-        local content = response.content or response.raw_response or "No response received"
-        M.add_message('ai', content)
-      end
-    end
-  end)
 end
 
 function M.close()

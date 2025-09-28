@@ -2,7 +2,6 @@
 local M = {}
 local search_replace = require('todo-ai.search_replace')
 local formatter = require('todo-ai.diff_formatter')
-local schema = require('todo-ai.schema')
 
 M.state = {
   target_buf = nil,
@@ -117,6 +116,14 @@ function M.show_response(target_buf, response, todo_text)
   if not target_buf or not vim.api.nvim_buf_is_valid(target_buf) then
     logger.error('diff_native', 'Invalid buffer')
     vim.api.nvim_echo({{'Invalid buffer', 'ErrorMsg'}}, false, {})
+    return
+  end
+
+  -- CRITICAL: Never modify the chat buffer
+  local buf_name = vim.api.nvim_buf_get_name(target_buf)
+  if buf_name:match('Todo%-AI Chat') then
+    logger.error('diff_native', 'Attempted to modify chat buffer - aborting')
+    vim.api.nvim_echo({{'Cannot modify chat buffer!', 'ErrorMsg'}}, false, {})
     return
   end
 
@@ -387,7 +394,7 @@ function M.apply_unified_changes()
 
   -- Apply the changes
   if #changes_to_apply > 0 then
-    local new_lines, applied_count, errors = schema.apply_changes(result, changes_to_apply)
+    local new_lines, applied_count, errors = search_replace.apply_changes(result, changes_to_apply)
     if errors then
       vim.api.nvim_echo({{'Warning: Some changes failed - ' .. errors, 'WarningMsg'}}, false, {})
     end

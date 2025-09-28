@@ -76,102 +76,13 @@ function M.auto_scan()
 end
 
 function M.process_todo(todo, bufnr)
-  M.state.current_todo = todo
-
-  -- Open chat immediately and show processing message
-  M.open_chat()
-  chat.add_message('user', 'Processing: ' .. todo.instruction)
-
-  -- Show thinking with model name
-  local model = config.get('model')
-  chat.show_thinking(model)
-
-  -- Gather context
-  local context = M.gather_context(bufnr, todo)
-
-  -- Get provider (ensure providers is loaded)
-  if not providers then
-    providers = require('todo-ai.providers')
-    providers.setup()
-  end
-  local provider_name = config.get('provider')
-  local provider = providers.get(provider_name)
-
-  if not provider then
-    chat.hide_thinking()
-    chat.add_message('ai', '❌ Error: Provider ' .. provider_name .. ' not found')
-
-    -- Show helpful non-blocking notification
-    vim.schedule(function()
-      vim.notify(
-        string.format("❌ Provider '%s' not configured\n\nPlease check your config:\n• Set provider to 'claude', 'openai', or 'ollama'\n• Ensure API key is set if required", provider_name),
-        vim.log.levels.ERROR,
-        { title = "Todo-AI Configuration", timeout = 5000 }
-      )
-    end)
-    return
-  end
-
-  -- Build context string
-  local context_str = vim.fn.json_encode(context)
-
-  -- Request completion from provider
-  provider.complete_async(todo.instruction, context_str, {
-    model = config.get('model'),
-    temperature = config.get('temperature')
-  }, function(response, error)
-    -- Hide thinking spinner
-    chat.hide_thinking()
-
-    if error then
-      local error_msg = type(error) == 'string' and error or vim.inspect(error)
-      chat.add_message('ai', '❌ Error: ' .. error_msg)
-
-      -- Show non-blocking notification with more context
-      vim.schedule(function()
-        vim.notify(
-          string.format("❌ TODO-AI Request Failed\n\n%s\n\nCheck your API key and network connection.", error_msg),
-          vim.log.levels.ERROR,
-          { title = "Todo-AI", timeout = 5000 }
-        )
-      end)
-      return
-    end
-
-    -- Display changes (SEARCH/REPLACE format)
-    if response.changes then
-      -- Use new optimized diff display, passing the full raw TODO line
-      local todo_text = ""
-      if M.state.current_todo then
-        -- Use the full_line which contains the complete TODO including "TODO: @ai"
-        todo_text = M.state.current_todo.full_line or ("TODO: @ai " .. M.state.current_todo.instruction)
-      end
-      diff.show_response(bufnr, response, todo_text)
-      M.state.pending_diff = response
-    else
-      -- No diff to display
-      M.state.pending_diff = nil
-    end
-
-    -- Store the target buffer filetype for proper formatting
-    response.target_filetype = vim.bo[bufnr].filetype
-
-    -- Add formatted response to chat
-    local formatted = M.format_response(response)
-    if formatted and formatted ~= '' then
-      chat.add_message('ai', formatted)
-    else
-      -- Fallback to simple display
-      if response.changes then
-        chat.add_message('ai', 'Generated changes for lines')
-      elseif response.code_snippet then
-        chat.add_message('ai', 'Code example:\n```\n' .. response.code_snippet .. '\n```')
-      end
-      if response.explanation then
-        chat.add_message('ai', response.explanation)
-      end
-    end
-  end)
+  -- Use unified prompt system for ALL processing
+  local unified_prompt = require('todo-ai.unified_prompt')
+  unified_prompt.process({
+    instruction = todo.instruction,
+    todo = todo,
+    bufnr = bufnr
+  })
 end
 
 function M.gather_context(bufnr, todo)
@@ -367,10 +278,15 @@ function M.format_response(response)
 end
 
 function M.open_chat()
-  if not M.state.chat_buf or not vim.api.nvim_buf_is_valid(M.state.chat_buf) then
-    M.state.chat_buf = chat.create()
+  -- Store the current buffer if it's not the chat buffer (for context)
+  local current_buf = vim.api.nvim_get_current_buf()
+  local buf_name = vim.api.nvim_buf_get_name(current_buf)
+  if not buf_name:match('Todo%-AI Chat') and buf_name ~= '' then
+    M.state.last_code_buffer = current_buf
   end
 
+  -- Always call create() which now handles existing buffers properly
+  M.state.chat_buf = chat.create()
   chat.open(M.state.chat_buf)
 end
 
@@ -500,8 +416,8 @@ function M.accept_all_project_changes()
       file:close()
 
       -- Apply changes using schema helper
-      local schema = require('todo-ai.schema')
-      local modified_lines = schema.apply_changes(lines, changes)
+      local search_replace = require('todo-ai.search_replace')
+      local modified_lines = search_replace.apply_changes(lines, changes)
 
       -- Write back to file
       file = io.open(file_path, "w")

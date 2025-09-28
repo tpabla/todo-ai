@@ -345,9 +345,15 @@ function M.apply_formatting(buf, hunks, state, ns_id, opts)
         end
       end
 
-      -- Add footer with description
+      -- Add footer with description after this hunk
       local footer_lines = M.create_footer(description, opts)
-      local footer_pos = math.min(hunk.end_line - 1, buf_line_count - 1)
+
+      -- Use display_end if available (position in the display buffer), otherwise fall back to end_line
+      -- display_end is already 0-indexed from the calculation (display_line + #replace_lines - 1)
+      local footer_pos = hunk.display_end or hunk.end_line
+
+      -- Make sure we don't exceed buffer bounds (footer_pos is the line AFTER the replacement)
+      footer_pos = math.min(footer_pos, buf_line_count - 1)
 
       if footer_pos >= 0 and footer_pos < buf_line_count then
         vim.api.nvim_buf_set_extmark(buf, ns_id, footer_pos, 0, {

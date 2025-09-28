@@ -1,5 +1,5 @@
--- Centralized prompt configuration
--- Single source of truth for all prompt instructions
+-- Centralized prompt and schema configuration
+-- Single source of truth for all prompt instructions and response schemas
 local M = {}
 
 -- Core SEARCH/REPLACE rules (shared between schema and prompt_builder)
@@ -63,15 +63,33 @@ function M.get_schema_description()
   return string.format([[
 CRITICAL: Respond with ONLY pure JSON - no markdown wrapping around the JSON itself!
 
-FIRST, DETERMINE THE RESPONSE MODE:
-- If the user is asking for code changes, modifications, or fixes: use mode="changes"
-- If the user is asking questions, requesting explanations, or having a conversation: use mode="chat"
+FIRST, DETERMINE THE RESPONSE MODE BY UNDERSTANDING USER INTENT:
+
+Ask yourself: "Does the user want me to CHANGE their code or just UNDERSTAND it?"
+
+Use mode="changes" when the user wants code to be different:
+- They describe a problem that needs fixing
+- They want new functionality added
+- They're asking for improvements or optimizations
+- They want something to work differently
+- They're describing desired behavior that doesn't exist yet
+
+Use mode="chat" when the user wants understanding:
+- They're asking what their code does
+- They want to know how something works
+- They're asking why something happens
+- They want concepts explained
+- They're debugging and need to understand current behavior
+- They're asking about their code without implying changes
+
+INFERENCE RULE: Look for intent to modify vs intent to understand. If they're describing how things SHOULD be (future state) → use mode="changes". If they're asking about how things ARE (current state) → use mode="chat".
 
 RESPONSE FORMAT: Raw JSON object with ONE of these two structures:
 
 FOR CODE CHANGES (mode="changes"):
 {
   "mode": "changes",
+  "filename": "string (OPTIONAL)",      // Target filename (e.g., "test.py", "main.lua")
   "changes": [                         // REQUIRED array of SEARCH/REPLACE changes
     {
       "search": "string (REQUIRED)",   // EXACT text to search for in the file
@@ -82,6 +100,8 @@ FOR CODE CHANGES (mode="changes"):
   "language": "string (auto-detected)", // File language/type
   "explanation": "string (REQUIRED)"    // Overall transformation summary
 }
+
+IMPORTANT: Include "filename" when you know which file to modify (you'll usually see it in the context)
 
 FOR CONVERSATIONAL RESPONSES (mode="chat"):
 {
@@ -126,6 +146,18 @@ BAD EXAMPLE (Too granular - creates review burden):
 }
 ^ Too many tiny changes! Group logically for easier review.]], table.concat(rules, "\n"))
 end
+
+
+-- Markdown formatting requirements for chat mode
+M.markdown_format = {
+  code_blocks = "Use triple backticks with language identifier: ```lua, ```python, etc.",
+  inline_code = "Use single backticks for inline code: `variable_name`",
+  headers = "Use ## for main sections, ### for subsections",
+  lists = "Use - or * for unordered lists, 1. 2. 3. for ordered lists",
+  emphasis = "Use **bold** for important terms, *italic* for emphasis",
+  links = "Use [text](url) format for links",
+  tables = "Use | for table columns with |---|---| separator"
+}
 
 
 return M

@@ -1,7 +1,7 @@
 -- Comprehensive test suite for SEARCH/REPLACE functionality
 describe("SEARCH/REPLACE functionality", function()
   local diff_native = require('todo-ai.diff_native')
-  local schema = require('todo-ai.schema')
+  local search_replace = require('todo-ai.search_replace')
   local parser = require('todo-ai.parser')
 
   -- Helper to create a test buffer

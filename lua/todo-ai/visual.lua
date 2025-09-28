@@ -1,9 +1,9 @@
 local M = {}
 
--- Create a floating window for input
+-- Create a minimal floating window for input
 function M.create_input_window(callback)
-  local width = 60
-  local height = 3
+  local width = 50
+  local height = 3  -- 3 lines for padding
 
   -- Calculate center position
   local row = math.floor((vim.o.lines - height) / 2)
@@ -13,10 +13,11 @@ function M.create_input_window(callback)
   local buf = vim.api.nvim_create_buf(false, true)
 
   -- Set buffer options
-  vim.bo[buf].buftype = 'prompt'
+  vim.bo[buf].buftype = ''  -- Use normal buffer type for better control
   vim.bo[buf].bufhidden = 'wipe'
+  vim.bo[buf].modifiable = true
 
-  -- Create window
+  -- Create minimal window
   local win = vim.api.nvim_open_win(buf, true, {
     relative = 'editor',
     width = width,
@@ -24,31 +25,38 @@ function M.create_input_window(callback)
     row = row,
     col = col,
     style = 'minimal',
-    border = 'rounded',
-    title = ' Enter TODO instruction ',
+    border = 'single',
+    title = ' TODO: @ai ',
     title_pos = 'center'
   })
 
+  -- Set minimal highlight groups
+  vim.api.nvim_set_hl(0, 'TodoAIFloatBorder', { fg = '#ff00ff' })
+  vim.api.nvim_set_hl(0, 'TodoAIFloatTitle', { fg = '#00ff9f', bold = true })
+
+  -- Apply highlights to window
+  vim.api.nvim_win_set_option(win, 'winhighlight', 'FloatBorder:TodoAIFloatBorder,NormalFloat:Normal')
+
   -- Set window options
-  vim.wo[win].wrap = true
+  vim.wo[win].wrap = false
   vim.wo[win].cursorline = false
 
-  -- Add prompt text
+  -- Add lines with padding - middle line has the prompt
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-    "What should the AI do with this code?",
     "",
-    "> "
+    "> ",
+    ""
   })
 
-  -- Position cursor after prompt
-  vim.api.nvim_win_set_cursor(win, {3, 2})
+  -- Position cursor after prompt on middle line
+  vim.api.nvim_win_set_cursor(win, {2, 2})
 
   -- Set up keymaps
   vim.api.nvim_buf_set_keymap(buf, 'i', '<CR>', '', {
     noremap = true,
     callback = function()
       local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-      local instruction = lines[3]:sub(3) -- Remove "> " prompt
+      local instruction = lines[2]:sub(3) -- Remove "> " prompt from middle line
 
       -- Close window
       vim.api.nvim_win_close(win, true)
@@ -81,7 +89,7 @@ function M.create_input_window(callback)
     end
   })
 
-  -- Start insert mode
+  -- Start insert mode in the floating window
   vim.cmd('startinsert!')
 end
 
@@ -131,103 +139,21 @@ function M.process_visual_selection()
 
   -- Create floating input window
   M.create_input_window(function(instruction)
-    -- Create a virtual TODO comment at the selection
-    local init = require('todo-ai.init')
-    local chat = require('todo-ai.chat')
-
-    -- Build context from selection
+    -- Use unified prompt system
+    local unified_prompt = require('todo-ai.unified_prompt')
     local selected_text = table.concat(selected_lines, '\n')
 
-    -- Create a todo object
-    local todo = {
+    -- Ensure we're in normal mode for proper render-markdown display
+    vim.cmd('stopinsert')
+
+    -- Process through unified system
+    unified_prompt.process({
       instruction = instruction,
-      line = start_line,
-      end_line = end_line,
       selected_text = selected_text,
-      is_visual = true,
-      bufnr = original_bufnr  -- Store the original buffer
-    }
-
-    -- Store in state
-    init.state.current_todo = todo
-
-    -- Open chat and show processing
-    init.open_chat()
-    chat.add_message('user', string.format('Selected code:\n```\n%s\n```\n\nInstruction: %s', selected_text, instruction))
-
-    -- Get model and show thinking
-    local config = require('todo-ai.config')
-    local model = config.get('model')
-    chat.show_thinking(model)
-
-    -- Gather context from the original buffer
-    local context = init.gather_context(original_bufnr, todo)
-
-    -- Add selected text and range to context
-    context.selected_text = selected_text
-    context.instruction = instruction
-    context.end_line = end_line  -- Add end line for the range
-
-    -- Get provider and process
-    local providers = require('todo-ai.providers')
-    local provider_name = config.get('provider')
-    local provider = providers.get(provider_name)
-
-    if not provider then
-      chat.hide_thinking()
-      chat.add_message('ai', 'Error: Provider ' .. provider_name .. ' not found')
-      vim.notify('Error: Provider ' .. provider_name .. ' not found', vim.log.levels.ERROR)
-      return
-    end
-
-    -- Build context string with selected text emphasis
-    local context_str = vim.fn.json_encode(context)
-
-    -- Request completion from provider
-    provider.complete_async(instruction, context_str, {
-      model = config.get('model'),
-      temperature = config.get('temperature')
-    }, function(response, error)
-      -- Hide thinking spinner
-      chat.hide_thinking()
-
-      if error then
-        chat.add_message('ai', 'Error: ' .. error)
-        vim.notify('Error: ' .. error, vim.log.levels.ERROR)
-        return
-      end
-
-      -- Display diff for the selected region
-      if response.changes and #response.changes > 0 then
-        local diff = require('todo-ai.diff_native')
-
-        -- Visual selection uses changes format
-        local change = response.changes[1]
-        init.state.pending_diff = response
-        init.state.pending_diff.is_visual = true
-        init.state.pending_diff.start_line = start_line
-        init.state.pending_diff.end_line = end_line
-      end
-
-      -- Store the target buffer filetype for proper formatting
-      response.target_filetype = vim.bo[original_bufnr].filetype
-
-      -- Add formatted response to chat
-      local formatted = init.format_response(response)
-      if formatted and formatted ~= '' then
-        chat.add_message('ai', formatted)
-      else
-        -- Fallback to simple display
-        if response.changes then
-          chat.add_message('ai', 'Generated changes for selected lines')
-        elseif response.code_snippet then
-          chat.add_message('ai', 'Code example:\n```\n' .. response.code_snippet .. '\n```')
-        end
-        if response.explanation then
-          chat.add_message('ai', response.explanation)
-        end
-      end
-    end)
+      start_line = start_line,
+      end_line = end_line,
+      bufnr = original_bufnr
+    })
   end)
 end
 
