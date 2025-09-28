@@ -1,94 +1,36 @@
-.PHONY: test test-unit test-integration test-all lint install clean docs docs-update-readme
+.PHONY: test test-watch test-single clean-nvim check-nvim
 
-# Default target
-all: install
-
-# Install plugin
-install:
-	@echo "Installing todo-ai plugin..."
-	@./install.sh
-
-# Run all tests (Plenary)
+# Run all tests with cleanup
 test:
-	@echo "Running Plenary tests..."
-	@nvim --headless --noplugin -l tests/run_tests.lua 2>&1 | grep -v "^Test environment" | tail -100
-
-# Alias for backwards compatibility
-test-plenary: test
-
-# Run specific test file
-test-file:
-	@echo "Running test file: $(FILE)"
-	@nvim --headless --noplugin -u tests/minimal_init.lua \
-		-c "lua require('plenary.busted').run('$(FILE)')" \
-		-c "qall!"
-
-# Lint code
-lint:
-	@echo "Linting Lua code..."
-	@which luacheck > /dev/null 2>&1 || (echo "Installing luacheck..." && luarocks install luacheck)
-	@luacheck lua/ --globals vim --ignore 212 213 --max-line-length 120
-
-# Clean build artifacts
-clean:
-	@echo "Cleaning up..."
-	@rm -rf .todoai/
-	@rm -f /tmp/todo-ai.log
-	@find . -name "*.swp" -delete
-	@find . -name "*~" -delete
-
-# Development setup
-dev:
-	@echo "Setting up development environment..."
-	@./dev-setup.sh
-
-
-# Generate API documentation (always runs)
-docs:
-	@echo "Generating API documentation..."
-	@rm -rf $(CURDIR)/docs/api
-	@cd $(CURDIR) && lua scripts/generate_docs.lua lua/todo-ai docs/api
-
-# Update README with API docs links
-docs-update-readme: docs
-	@echo "Updating README with API documentation links..."
-	@echo "\n## API Documentation\n" >> README.md
-	@echo "Auto-generated API documentation from LuaLS annotations:\n" >> README.md
-	@find docs/api -name "*.md" | sort | while read file; do \
-		name=$$(basename $$file .md); \
-		path=$$file; \
-		echo "- [$$name]($$path)" >> README.md; \
-	done
-
-# Check dependencies
-check-deps:
-	@echo "Checking dependencies..."
-	@which lua > /dev/null 2>&1 || echo "Warning: lua not found"
-	@which nvim > /dev/null 2>&1 || echo "Warning: nvim not found"
-	@which curl > /dev/null 2>&1 || echo "Warning: curl not found"
-	@test -n "$$ANTHROPIC_API_KEY" || echo "Warning: ANTHROPIC_API_KEY not set"
-
-# Run benchmarks
-bench:
-	@echo "Running benchmarks..."
-	@cd test && lua benchmark.lua
+	@echo "Running tests with cleanup..."
+	@lua tests/run_tests.lua
 
 # Watch for changes and run tests
-watch:
-	@echo "Watching for changes..."
-	@which fswatch > /dev/null 2>&1 || (echo "Installing fswatch..." && brew install fswatch)
-	@fswatch -o lua/ test/ | xargs -n1 -I{} make test-unit
+test-watch:
+	@which fswatch > /dev/null || (echo "Install fswatch: brew install fswatch" && exit 1)
+	@while true; do \
+		clear; \
+		make test; \
+		echo ""; \
+		echo "Watching for changes (Ctrl+C to stop)..."; \
+		fswatch -1 -r lua/ tests/ 2>/dev/null; \
+	done
 
-# Help
-help:
-	@echo "Available targets:"
-	@echo "  make install      - Install the plugin"
-	@echo "  make test        - Run all tests"
-	@echo "  make test-unit   - Run unit tests"
-	@echo "  make test-integration - Run integration tests"
-	@echo "  make lint        - Lint the code"
-	@echo "  make clean       - Clean build artifacts"
-	@echo "  make dev         - Setup development environment"
-	@echo "  make docs        - Generate documentation"
-	@echo "  make check-deps  - Check dependencies"
-	@echo "  make help        - Show this help message"
+# Run a single test file
+test-single:
+	@test -z "$(FILE)" && echo "Usage: make test-single FILE=tests/plenary/xxx_spec.lua" && exit 1 || true
+	@echo "Running single test: $(FILE)"
+	@timeout 10 nvim --headless -u tests/minimal_init.lua \
+		-c "PlenaryBustedFile $(FILE)" -c "qa!" || \
+		(pkill -f 'nvim --headless'; exit 1)
+
+# Clean up any hanging nvim processes
+clean-nvim:
+	@echo "Cleaning up hanging nvim processes..."
+	@pkill -f 'nvim --headless' 2>/dev/null || echo "No hanging processes found"
+	@ps aux | grep -v grep | grep 'nvim --headless' || echo "All clean!"
+
+# Check for hanging nvim processes
+check-nvim:
+	@echo "Checking for nvim headless processes..."
+	@ps aux | grep -v grep | grep 'nvim --headless' || echo "No nvim headless processes running"

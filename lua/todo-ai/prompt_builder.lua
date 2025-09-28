@@ -81,11 +81,13 @@ CRITICAL INSTRUCTIONS FOR SEARCH/REPLACE:
 9. "description": Describe the logical transformation, not just mechanical changes
 10. IMPORTANT: Think in terms of features/components, not individual functions
 
-OPTIMIZATION HINTS:
-- If TODO mentions "update", "convert", "transform", "change to" → Use LARGE logical blocks
-- If TODO mentions "fix", "add small", "tweak" → Use smaller, targeted changes
-- When changing a theme/style/type → Group ALL related changes together
-- Default to fewer, smarter changes unless explicitly asked for granular ones
+DIFF OPTIMIZATION GUIDELINES:
+- Group related changes logically - what makes sense to review together?
+- Include complete context - whole functions, not just individual lines
+- Minimize review burden - aim for 2-3 cohesive diffs instead of 5-7 tiny ones
+- For related functions (like recipe methods), group them in one diff
+- Balance readability with completeness - not too small, not too massive
+- Think like a reviewer - what would you want to approve as one unit?
 
 Example for your response - use logical blocks when appropriate:]],
       context_obj.file_path or 'unknown',              -- %s #1

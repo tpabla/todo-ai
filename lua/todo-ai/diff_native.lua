@@ -1,5 +1,7 @@
 -- Native Neovim diff display with accept/reject
 local M = {}
+local search_replace = require('todo-ai.search_replace')
+local formatter = require('todo-ai.diff_formatter')
 local schema = require('todo-ai.schema')
 
 M.state = {
@@ -8,7 +10,6 @@ M.state = {
   hunks = {},
   original_lines = nil,
   modified_lines = nil,
-  processed_todos = {}, -- Track TODO texts that were processed (as a set)
   ns_id = nil,
   diff_showing = false,
   accepted_diffs = {}, -- Track which diffs are accepted (by index)
@@ -17,42 +18,44 @@ M.state = {
 
 -- Build visual display applying accepted changes
 function M.build_search_replace_display(original_lines, changes)
-  -- Apply accepted changes to get the final display
-  local accepted_changes = {}
+  -- Use search_replace module for display building
+  local display_lines = search_replace.build_display(original_lines, changes, M.state.rejected_diffs)
+
+  -- Track regions for navigation
+  local regions = search_replace.track_change_regions(original_lines, changes, M.state.rejected_diffs)
+
+  -- NEW: Track where each change appears in the DISPLAY buffer
+  -- This is critical for highlighting to work correctly
+  local current_display_line = 1
+  local content = table.concat(original_lines, '\n')
+
   for i, change in ipairs(changes) do
     if not M.state.rejected_diffs[i] then
-      table.insert(accepted_changes, change)
-    end
-  end
+      -- Find where this change is in the original
+      local start_pos = content:find(change.search, 1, true)
 
-  -- Apply changes to get the new content
-  local display_lines = vim.deepcopy(original_lines)
-  if #accepted_changes > 0 then
-    local result, _, err = schema.apply_changes(original_lines, accepted_changes)
-    if result and not err then
-      display_lines = result
-    end
-  end
-
-  -- Track where each change appears in the original for highlighting
-  local content = table.concat(original_lines, '\n')
-  for i, change in ipairs(changes) do
-    if change and change.search and change.replace and not M.state.rejected_diffs[i] then
-      local start_pos, end_pos = content:find(change.search, 1, true)
       if start_pos then
-        -- Calculate line numbers for this change
-        local before = content:sub(1, start_pos - 1)
-        local start_line = select(2, before:gsub('\n', '\n')) + 1
-        local replace_lines = vim.split(change.replace, '\n', { plain = true })
-        local end_line = start_line + #replace_lines - 1
+        -- Calculate how many lines come before this change
+        local before_content = content:sub(1, start_pos - 1)
+        local lines_before = select(2, before_content:gsub('\n', '\n'))
 
-        -- Update hunk positions for navigation
+        -- The replacement lines
+        local replacement_lines = vim.split(change.replace, '\n', { plain = true })
+
+        -- Update hunk with DISPLAY positions (where the replacement actually appears)
         if M.state.hunks[i] then
-          M.state.hunks[i].start_line = start_line
-          M.state.hunks[i].end_line = end_line
+          M.state.hunks[i].display_start = current_display_line + lines_before
+          M.state.hunks[i].display_end = current_display_line + lines_before + #replacement_lines - 1
           M.state.hunks[i].search_text = change.search
           M.state.hunks[i].replace_text = change.replace
+
+          -- Keep original positions for reference
+          M.state.hunks[i].start_line = lines_before + 1
+          M.state.hunks[i].end_line = lines_before + select(2, change.search:gsub('\n', '\n')) + 1
         end
+
+        -- Update content for next iteration (apply this change)
+        content = content:sub(1, start_pos - 1) .. change.replace .. content:sub(start_pos + #change.search)
       end
     end
   end
@@ -60,128 +63,15 @@ function M.build_search_replace_display(original_lines, changes)
   return display_lines
 end
 
--- Calculate diff hunks between original and new content
-function M.calculate_diff_hunks(original_lines, new_lines)
-  local hunks = {}
-
-  -- Simple line-by-line comparison to identify changed regions
-  local i, j = 1, 1
-  local max_iterations = (#original_lines + #new_lines) * 2  -- Prevent infinite loops
-
-  local iteration_count = 0
-  while i <= #original_lines or j <= #new_lines do
-    iteration_count = iteration_count + 1
-    if iteration_count > max_iterations then
-      -- Protection against infinite loops
-      local logger = require('todo-ai.logger')
-      logger.error('diff_native', 'calculate_diff_hunks exceeded max iterations, breaking loop')
-      break
-    end
-
-    local start_i, start_j = i, j
-    local removed_lines, added_lines = {}, {}
-
-    -- Find a block of differences
-    local found_diff = false
-
-    -- Skip matching lines at the beginning
-    while i <= #original_lines and j <= #new_lines and original_lines[i] == new_lines[j] do
-      i = i + 1
-      j = j + 1
-    end
-
-    -- Now we're at a difference (or end of one file)
-    local diff_start_i, diff_start_j = i, j
-
-    -- Collect removed lines
-    while i <= #original_lines do
-      -- Look ahead to see if this line appears in new_lines
-      local found_match = false
-      for k = j, math.min(j + 10, #new_lines) do -- Look ahead up to 10 lines
-        if original_lines[i] == new_lines[k] then
-          found_match = true
-          break
-        end
-      end
-
-      if found_match then
-        break
-      else
-        table.insert(removed_lines, original_lines[i])
-        i = i + 1
-        found_diff = true
-      end
-    end
-
-    -- Collect added lines
-    while j <= #new_lines do
-      -- Look ahead to see if this line appears in original_lines
-      local found_match = false
-      for k = i, math.min(i + 10, #original_lines) do -- Look ahead up to 10 lines
-        if new_lines[j] == original_lines[k] then
-          found_match = true
-          break
-        end
-      end
-
-      if found_match then
-        break
-      else
-        table.insert(added_lines, new_lines[j])
-        j = j + 1
-        found_diff = true
-      end
-    end
-
-    -- If we found differences, create a hunk
-    if found_diff then
-      table.insert(hunks, {
-        old_start = diff_start_i,
-        old_end = i - 1,
-        new_start = diff_start_j,
-        new_end = j - 1,
-        removed_lines = removed_lines,
-        added_lines = added_lines
-      })
-    end
-
-    -- CRITICAL FIX: Ensure we make progress even when no diff found
-    -- If we haven't moved forward, force progress to avoid infinite loop
-    if i == start_i and j == start_j then
-      if i <= #original_lines then
-        i = i + 1
-      elseif j <= #new_lines then
-        j = j + 1
-      else
-        break
-      end
-    end
-
-    -- If we've reached the end of both files, break
-    if i > #original_lines and j > #new_lines then
-      break
-    end
-  end
-
-  -- If no hunks found but files are different, treat as one big replacement
-  if #hunks == 0 and #original_lines ~= #new_lines then
-    table.insert(hunks, {
-      old_start = 1,
-      old_end = #original_lines,
-      new_start = 1,
-      new_end = #new_lines,
-      removed_lines = original_lines,
-      added_lines = new_lines
-    })
-  end
-
-  return hunks
-end
 
 -- Show SEARCH/REPLACE changes with awesome visual highlighting
 function M.show_response(target_buf, response)
+  local logger = require('todo-ai.logger')
+  logger.info('diff_native', 'show_response called')
+
   -- Validate inputs
   if not target_buf or not vim.api.nvim_buf_is_valid(target_buf) then
+    logger.error('diff_native', 'Invalid buffer')
     vim.api.nvim_echo({{'Invalid buffer', 'ErrorMsg'}}, false, {})
     return
   end
@@ -201,9 +91,12 @@ function M.show_response(target_buf, response)
   M.state.rejected_diffs = {}
 
   if not response.changes then
+    logger.error('diff_native', 'Response must contain "changes" array')
     vim.api.nvim_echo({{'Response must contain "changes" array', 'ErrorMsg'}}, false, {})
     return
   end
+
+  logger.info('diff_native', string.format('Processing %d changes', #response.changes))
 
   -- Store each change as a hunk with its index
   for i, change in ipairs(response.changes) do
@@ -288,7 +181,18 @@ function M.show_response(target_buf, response)
 end
 
 -- Setup inline diff view showing changes in the original buffer
-function M.setup_inline_diff_view(target_buf, original_lines, display_lines)
+function M.setup_inline_diff_view(target_buf, original_lines, display_lines, preserve_cursor)
+  -- Save cursor position if requested
+  local saved_cursor = nil
+  if preserve_cursor then
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_get_buf(win) == target_buf then
+        saved_cursor = vim.api.nvim_win_get_cursor(win)
+        break
+      end
+    end
+  end
+
   -- Create namespace for virtual text
   M.state.ns_id = vim.api.nvim_create_namespace('todo_ai_diff')
 
@@ -304,122 +208,24 @@ function M.setup_inline_diff_view(target_buf, original_lines, display_lines)
 
   logger.info('diff_native', string.format('Buffer showing SEARCH/REPLACE blocks'))
 
-  -- Highlight each logical change block
-  local buf_line_count = vim.api.nvim_buf_line_count(target_buf)
+  -- Use formatter module for visual formatting
+  formatter.apply_formatting(target_buf, M.state.hunks, M.state, M.state.ns_id)
 
-  for idx, hunk in ipairs(M.state.hunks) do
-    if hunk.start_line and hunk.end_line then
-      local change_idx = hunk.change_index
-      local change_desc = hunk.description or ""
-
-      -- Skip rejected changes
-      if M.state.rejected_diffs[change_idx] then
-        goto continue
-      end
-
-      local is_accepted = M.state.accepted_diffs[change_idx] or false
-
-      -- Status indicator
-      local status_indicator = is_accepted and "✅ ACCEPTED" or "🤔 PENDING"
-      local status_color = is_accepted and "String" or "WarningMsg"
-
-      -- Add header above the change block
-      local header_parts = {
-        {string.rep("━", 8), "DiagnosticVirtualText"},
-        {" ", "Normal"},
-        {status_indicator, status_color},
-        {" [", "Normal"},
-        {"ta", "String"},
-        {"]", "Normal"},
-        {" accept ", "Comment"},
-        {"[", "Normal"},
-        {"tr", "ErrorMsg"},
-        {"]", "Normal"},
-        {" reject ", "Comment"},
-      }
-
-      -- Add change description if available
-      if change_desc and change_desc ~= "" then
-        table.insert(header_parts, {" • ", "Comment"})
-        table.insert(header_parts, {change_desc, "Todo"})
-      end
-
-      table.insert(header_parts, {" ", "Normal"})
-      table.insert(header_parts, {string.rep("━", 50), "DiagnosticVirtualText"})
-
-      -- Add header before the block (ensure it's in bounds)
-      local header_line = math.max(0, math.min(hunk.start_line - 1, buf_line_count - 1))
-      if header_line >= 0 and header_line < buf_line_count then
-        vim.api.nvim_buf_set_extmark(target_buf, M.state.ns_id, header_line, 0, {
-          virt_lines_above = true,
-          virt_lines = { header_parts }
-        })
-      end
-
-      -- Show what was replaced as virtual text if we have the original
-      if hunk.search_text then
-        local search_lines = vim.split(hunk.search_text, '\n', { plain = true })
-        local removed_display = {}
-        for _, line in ipairs(search_lines) do
-          table.insert(removed_display, {
-            {"- ", "DiffDelete"},
-            {line, "DiffDelete"}
-          })
-        end
-
-        -- Add removed lines as virtual text
-        if header_line >= 0 and header_line < buf_line_count then
-          vim.api.nvim_buf_set_extmark(target_buf, M.state.ns_id, header_line, 0, {
-            virt_lines_above = true,
-            virt_lines = removed_display,
-            priority = 5
-          })
-        end
-      end
-
-      -- Highlight the replacement lines
-      for line_num = hunk.start_line, math.min(hunk.end_line, buf_line_count) do
-        local line_idx = line_num - 1
-        if line_idx >= 0 and line_idx < buf_line_count then
-          local line = vim.api.nvim_buf_get_lines(target_buf, line_idx, line_idx + 1, false)[1] or ""
-
-          -- Highlight as added/new content
-          vim.api.nvim_buf_set_extmark(target_buf, M.state.ns_id, line_idx, 0, {
-            end_row = line_idx,
-            end_col = #line,
-            hl_group = "DiffAdd",
-            priority = 10
-          })
-
-          -- Add gutter marker
-          vim.api.nvim_buf_set_extmark(target_buf, M.state.ns_id, line_idx, 0, {
-            sign_text = "+",
-            sign_hl_group = "DiffAdd",
-            priority = 10
-          })
-        end
-      end
-
-      -- Add footer after the block
-      local footer_lines = {
-        {{string.rep("━", 60), "DiagnosticVirtualText"}}
-      }
-
-      local footer_pos = math.min(hunk.end_line - 1, buf_line_count - 1)
-      if footer_pos >= 0 and footer_pos < buf_line_count then
-        vim.api.nvim_buf_set_extmark(target_buf, M.state.ns_id, footer_pos, 0, {
-          virt_lines = footer_lines,
-          virt_lines_above = false
-        })
+  -- Restore cursor position if saved, otherwise jump to first change
+  if saved_cursor then
+    -- Restore the saved cursor position
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_get_buf(win) == target_buf then
+        -- Ensure cursor position is within bounds
+        local line_count = vim.api.nvim_buf_line_count(target_buf)
+        local line = math.min(saved_cursor[1], line_count)
+        vim.api.nvim_win_set_cursor(win, {line, saved_cursor[2]})
+        break
       end
     end
-    ::continue::
-  end
-
-  -- Jump to first change (ensure position is valid)
-  if #M.state.hunks > 0 and M.state.hunks[1].start_line then
+  elseif #M.state.hunks > 0 and M.state.hunks[1].start_line then
+    -- Only jump to first change on initial load
     local first_line = math.max(1, math.min(M.state.hunks[1].start_line, vim.api.nvim_buf_line_count(target_buf)))
-    -- Only set cursor if we have a valid window for this buffer
     for _, win in ipairs(vim.api.nvim_list_wins()) do
       if vim.api.nvim_win_get_buf(win) == target_buf then
         vim.api.nvim_win_set_cursor(win, {first_line, 0})

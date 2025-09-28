@@ -351,6 +351,21 @@ function M.parse_markdown_formatted(response, result)
   local all_code = {}
 
   for lang, code in response:gmatch('```(%w*)%s*\n(.-)\n```') do
+    -- Special case: if it's JSON code block with our expected schema, parse it as JSON
+    if lang == 'json' or (lang == '' and code:match('^%s*{.*"changes"%s*:.*}%s*$')) then
+      local ok, data = pcall(vim.fn.json_decode, code)
+      if ok and data.changes then
+        -- This is our expected SEARCH/REPLACE format but wrapped in markdown
+        logger.info('Parser warning: AI wrapped JSON in markdown code block - should return raw JSON')
+        result.changes = data.changes
+        result.language = data.language
+        result.explanation = data.explanation or 'Generated changes'
+        result.format_detected = 'json_response'
+        result.warning = "JSON was wrapped in ```json``` - AI should return raw JSON only"
+        return
+      end
+    end
+
     table.insert(code_blocks, {lang = lang, code = code})
     table.insert(all_code, code)
   end

@@ -1,34 +1,52 @@
--- Simple test runner that sets up test mode and runs tests
-vim.g.todo_ai_test_mode = true
-vim.g.todo_ai_test_timeout = 100
+#!/usr/bin/env lua
 
--- Add current plugin to path
-vim.opt.rtp:append('.')
-package.path = package.path .. ";./lua/?.lua;./lua/?/init.lua;./tests/?.lua;./tests/?/init.lua"
+-- Test runner with automatic cleanup for hanging nvim processes
 
--- Find and add Plenary
-local plenary_paths = {
-  vim.fn.stdpath('data') .. '/lazy/plenary.nvim',
-  vim.fn.stdpath('data') .. '/site/pack/test/start/plenary.nvim',
-  vim.fn.stdpath('data') .. '/plugged/plenary.nvim',
-  '~/.local/share/nvim/site/pack/test/start/plenary.nvim',
-}
+local function cleanup_nvim()
+  os.execute("pkill -f 'nvim --headless' 2>/dev/null || true")
+end
 
-for _, path in ipairs(plenary_paths) do
-  local expanded = vim.fn.expand(path)
-  if vim.fn.isdirectory(expanded) == 1 then
-    vim.opt.rtp:append(expanded)
-    break
-  end
+local function run_tests()
+  -- Set trap for cleanup on exit
+  os.execute("trap 'pkill -f \"nvim --headless\"' EXIT INT TERM")
+
+  -- Build the nvim command with timeout
+  local cmd = table.concat({
+    "timeout 30",
+    "nvim --headless",
+    "-u tests/minimal_init.lua",
+    "-c 'lua require(\"plenary.test_harness\").test_directory(\"tests/plenary/\", {minimal_init=\"tests/minimal_init.lua\", sequential=true})'",
+    "-c 'qa!'"
+  }, " ")
+
+  print("Running tests...")
+  local result = os.execute(cmd)
+
+  -- Always cleanup
+  cleanup_nvim()
+
+  return result == 0
+end
+
+-- Check for hanging processes before starting
+local check_cmd = "ps aux | grep -v grep | grep 'nvim --headless' || true"
+local check = io.popen(check_cmd)
+local existing = check:read("*a")
+check:close()
+
+if existing and existing ~= "" then
+  print("Warning: Found existing nvim headless processes, cleaning up...")
+  cleanup_nvim()
 end
 
 -- Run tests
-local test_dir = 'tests/plenary'
-require('plenary.test_harness').test_directory(test_dir, {
-  minimal_init = false,  -- We already initialized
-  sequential = true,     -- Run tests sequentially to avoid timing issues
-  timeout = 5000,        -- 5 second timeout per test
-})
+local success = run_tests()
 
--- Exit
-vim.cmd('qall!')
+if success then
+  print("\n✅ All tests passed!")
+  os.exit(0)
+else
+  print("\n❌ Tests failed!")
+  cleanup_nvim()
+  os.exit(1)
+end
