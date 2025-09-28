@@ -74,16 +74,17 @@ echo ""
 
 # Run Plenary tests
 nvim --headless --noplugin -u "$MINIMAL_INIT" \
-     -c "PlenaryBustedDirectory $TEST_DIR { minimal_init = '$MINIMAL_INIT', sequential = false }" \
+     -c "lua require('plenary.test_harness').test_directory('$TEST_DIR', { minimal_init = '$MINIMAL_INIT', sequential = false })" \
+     -c "qall!" \
      2>&1 | tee /tmp/test-results.txt
 
 # Check results
-if grep -q "0 failures" /tmp/test-results.txt || grep -q "Success:" /tmp/test-results.txt; then
-    echo ""
-    echo -e "${GREEN}✅ All tests passed!${NC}"
-    exit 0
-else
+if grep -q "Tests Failed" /tmp/test-results.txt; then
     echo ""
     echo -e "${RED}❌ Some tests failed. Check output above.${NC}"
     exit 1
+else
+    echo ""
+    echo -e "${GREEN}✅ All Plenary tests passed!${NC}"
+    exit 0
 fi

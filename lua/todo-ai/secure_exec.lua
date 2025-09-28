@@ -17,6 +17,7 @@ M.ALLOWED_COMMANDS = {
   tail = true,
   wc = true,
   make = true,
+  echo = true,  -- Safe for output
   sleep = true,  -- For testing timeouts
 }
 
@@ -530,6 +531,18 @@ function M.execute_safe(command, args, callback)
     table.insert(cmd, arg)
   end
 
+  -- Use system for simple commands to avoid hanging
+  local result = vim.fn.system(cmd)
+  local exit_code = vim.v.shell_error
+
+  if exit_code == 0 then
+    callback(true, result, nil)
+  else
+    callback(false, nil, result)
+  end
+  return
+
+  --[[ Original async implementation (keeping for reference)
   local stdout_data = {}
   local stderr_data = {}
 
@@ -560,6 +573,7 @@ function M.execute_safe(command, args, callback)
       end
     end
   })
+  --]]
 end
 
 ---Validate data size

@@ -8,28 +8,20 @@ install:
 	@echo "Installing todo-ai plugin..."
 	@./install.sh
 
-# Run all tests
-test: test-all
-
-# Run unit tests (standalone)
-test-unit:
-	@echo "Running standalone unit tests..."
-	@lua run_tests.lua 2>/dev/null || true
-
-# Run Plenary tests (requires Neovim)
-test-plenary:
+# Run all tests (Plenary)
+test:
 	@echo "Running Plenary tests..."
 	@bash tests/run_plenary_tests.sh
 
-# Run integration tests
-test-integration:
-	@echo "Running integration tests..."
-	@if [ -f tests/legacy/integration_test.lua ]; then \
-		lua tests/legacy/integration_test.lua; \
-	fi
+# Alias for backwards compatibility
+test-plenary: test
 
-# Run all tests
-test-all: test-unit test-plenary
+# Run specific test file
+test-file:
+	@echo "Running test file: $(FILE)"
+	@nvim --headless --noplugin -u tests/minimal_init.lua \
+		-c "lua require('plenary.busted').run('$(FILE)')" \
+		-c "qall!"
 
 # Lint code
 lint:
@@ -50,10 +42,6 @@ dev:
 	@echo "Setting up development environment..."
 	@./dev-setup.sh
 
-# Run specific test file
-test-file:
-	@echo "Running test file: $(FILE)"
-	@cd test && lua -e "require('$(FILE:%.lua=%)')" && lua test_runner.lua
 
 # Generate documentation
 docs:

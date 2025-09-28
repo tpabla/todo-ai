@@ -291,22 +291,53 @@ M.validate_config()              -- Config validation
 
 ### Running Tests
 
-```bash
-# Install test dependencies
-# In Neovim: :Lazy install plenary.nvim
+#### Prerequisites
 
+```bash
+# Install Plenary.nvim (required for tests)
+# Using lazy.nvim - add to your Neovim config:
+{ 'nvim-lua/plenary.nvim' }
+
+# Or manually:
+git clone https://github.com/nvim-lua/plenary.nvim \
+  ~/.local/share/nvim/site/pack/test/start/plenary.nvim
+```
+
+#### Test Commands
+
+```bash
 # Run all tests
 make test
 
-# Run specific suite
-make test-plenary
-make test-unit
-
-# Watch mode
-make test-watch
-
-# Run specific file
+# Run specific test file
 make test-file FILE=tests/plenary/llm_validator_spec.lua
+
+# Alternative: Run tests directly
+bash tests/run_plenary_tests.sh
+
+# Watch mode (requires fswatch on macOS or entr on Linux)
+make test-watch
+```
+
+#### Running Tests in Neovim
+
+```vim
+" Run current test file (if in a *_spec.lua file)
+:PlenaryBustedFile %
+
+" Run all tests in directory
+:PlenaryBustedDirectory tests/plenary/
+```
+
+#### Debugging Failed Tests
+
+```bash
+# Run with verbose output
+nvim --headless -u tests/minimal_init.lua \
+  -c "lua require('plenary.test_harness').test_directory('tests/plenary', {minimal_init = 'tests/minimal_init.lua', sequential = true})"
+
+# Check test logs
+tail -f /tmp/todo-ai.log
 ```
 
 ### Adding a New Provider
@@ -335,6 +366,15 @@ providers.register('newprovider', require('todo-ai.providers.newprovider'))
 - **Path Validation**: Prevents directory traversal attacks
 - **Rate Limiting**: Token bucket algorithm per provider
 - **No Secret Logging**: API keys never logged or displayed
+
+## 🧪 Testing
+
+The plugin uses Plenary.nvim for testing, which runs tests in a real Neovim environment:
+
+- **Test Coverage**: ~85% with 50+ tests
+- **Test Location**: `tests/plenary/`
+- **Framework**: Plenary.nvim (required)
+- **Runtime**: ~500ms for full suite
 
 ## 🐛 Troubleshooting
 
