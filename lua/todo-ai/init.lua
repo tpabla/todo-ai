@@ -138,14 +138,13 @@ function M.process_todo(todo, bufnr)
       return
     end
 
-    -- Display diff using optimized format
-    if response.changes or response.edits then
+    -- Display changes (SEARCH/REPLACE format)
+    if response.changes then
       -- Use new optimized diff display
       diff.show_response(bufnr, response)
       M.state.pending_diff = response
-      M.state.pending_diff.is_full_buffer = response.replace_buffer
-    elseif response.code_snippet then
-      -- Just informational, no diff
+    else
+      -- No diff to display
       M.state.pending_diff = nil
     end
 
@@ -279,41 +278,25 @@ function M.format_response(response)
     table.insert(formatted, response.thinking_formatted)
   end
 
-  -- Add generated code or changes
+  -- Add SEARCH/REPLACE changes with proper language formatting
   if response.changes then
-    table.insert(formatted, '### 📄 Code Changes')
+    local language = response.language or vim.bo.filetype or 'text'
+    table.insert(formatted, string.format('### 📄 Changes (%s)', language:gsub('^%l', string.upper)))
+
     for i, change in ipairs(response.changes) do
-      -- Get the code content (handles both 'lines' array and 'code' string formats)
-      local code_content
-      if change.lines then
-        code_content = table.concat(change.lines, '\n')
-      elseif change.code then
-        code_content = change.code
-      else
-        code_content = '(No code provided)'
+      if change.search and change.replace then
+        table.insert(formatted, string.format('\n**Change %d**: %s',
+          i, change.description or "Update"))
+        -- Show search/replace in a clear format
+        table.insert(formatted, string.format('```%s', language))
+        table.insert(formatted, '<<<<<<< SEARCH')
+        table.insert(formatted, change.search)
+        table.insert(formatted, '=======')
+        table.insert(formatted, change.replace)
+        table.insert(formatted, '>>>>>>> REPLACE')
+        table.insert(formatted, '```')
       end
-
-      table.insert(formatted, string.format('\n**Change %d** (lines %d-%d): %s\n```%s\n%s\n```',
-        i, change.start_line, change.end_line,
-        change.description or '',
-        vim.bo.filetype or '',
-        code_content))
     end
-  elseif response.edits then
-    table.insert(formatted, '### 📄 Line Edits')
-    local edit_lines = {}
-    for line_num, content in pairs(response.edits) do
-      table.insert(edit_lines, {num = tonumber(line_num), content = content})
-    end
-    table.sort(edit_lines, function(a, b) return a.num < b.num end)
-
-    for _, edit in ipairs(edit_lines) do
-      local action = edit.content == "" and "Delete" or "Modify"
-      table.insert(formatted, string.format('\n**%s line %d**:\n```%s\n%s\n```',
-        action, edit.num, vim.bo.filetype or '', edit.content))
-    end
-  elseif response.code_snippet then
-    table.insert(formatted, '### 📄 Code Example\n```' .. (vim.bo.filetype or '') .. '\n' .. response.code_snippet .. '\n```')
   end
 
   -- Add explanation if different from thinking
@@ -323,29 +306,44 @@ function M.format_response(response)
 
   -- Add parsed sections if interesting
   if response.parsed_sections and type(response.parsed_sections) == 'table' then
+    -- Skip Additional Context section entirely since diffs are now properly formatted
+    -- Only show if there are truly unique fields we haven't displayed
     local has_interesting = false
     for k, v in pairs(response.parsed_sections) do
-      -- Skip internal fields and already displayed fields
+      -- Skip all standard fields that are already displayed elsewhere
       if k ~= 'code' and k ~= 'explanation' and k ~= 'thinking' and
          k ~= 'changes' and k ~= 'edits' and k ~= 'code_snippet' and
-         k ~= 'new_file' and k ~= 'replace_buffer' then
+         k ~= 'new_file' and k ~= 'replace_buffer' and
+         k ~= 'language' then  -- Also skip changes and language
         has_interesting = true
         break
       end
     end
 
+    -- Only show Additional Context if there are truly unique fields
     if has_interesting then
       table.insert(formatted, '\n### 📋 Additional Context')
       for k, v in pairs(response.parsed_sections) do
         if k ~= 'code' and k ~= 'explanation' and k ~= 'thinking' and
            k ~= 'changes' and k ~= 'edits' and k ~= 'code_snippet' and
-           k ~= 'new_file' and k ~= 'replace_buffer' then
+           k ~= 'new_file' and k ~= 'replace_buffer' and
+           k ~= 'language' then  -- Also skip changes and language
           -- Format value based on type
           local value_str
           if type(v) == 'table' then
-            value_str = vim.inspect(v, {depth = 2, indent = "  "})
+            -- Only show first few items for arrays to avoid clutter
+            if #v > 3 then
+              value_str = string.format('[%d items]', #v)
+            else
+              value_str = vim.inspect(v, {depth = 1, indent = "  "})
+            end
           elseif type(v) == 'string' then
-            value_str = v
+            -- Truncate long strings
+            if #v > 100 then
+              value_str = v:sub(1, 100) .. '...'
+            else
+              value_str = v
+            end
           else
             value_str = tostring(v)
           end

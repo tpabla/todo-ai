@@ -347,7 +347,7 @@ function M.send_to_backend(message)
 
       -- Handle code changes based on new schema
       if response.changes and #response.changes > 0 then
-        local diff = require('todo-ai.diff_mini')
+        local diff = require('todo-ai.diff_native')
 
         -- Store current buffer for changes
         local target_buf = context_info.current_buffer
@@ -559,11 +559,8 @@ function M.apply_edit(buffer_id, line_start, line_end, new_content)
     end
   end
 
-  -- Get the diff module for cleaning code blocks
-  local diff = require('todo-ai.diff_mini')
-
   -- Clean any markdown formatting from the content
-  local cleaned_content = diff.clean_code_block(new_content)
+  local cleaned_content = new_content:gsub('^```[^\n]*\n', ''):gsub('\n```$', '')
 
   -- Convert new_content string to lines
   local new_lines = vim.split(cleaned_content, '\n')
@@ -848,13 +845,12 @@ end
 
 function M.queue_changes(target_buf, changes, explanation)
   -- Queue and display changes for review
-  local diff = require('todo-ai.diff_mini')
+  local diff = require('todo-ai.diff_native')
   local init = require('todo-ai.init')
 
   -- If single change, show standard diff
   if #changes == 1 then
     local change = changes[1]
-    diff.show_range(target_buf, change.start_line, change.end_line, change.code, change.description or explanation or "")
     init.state.pending_diff = {
       changes = changes,
       explanation = explanation,

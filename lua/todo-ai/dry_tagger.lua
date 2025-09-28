@@ -1,7 +1,7 @@
 ---@class DryTagger
 local M = {}
 
-local diff = require('todo-ai.diff_mini')
+local diff = require('todo-ai.diff_native')
 local config = require('todo-ai.config')
 local providers = require('todo-ai.providers')
 
@@ -141,7 +141,6 @@ function M.process_dry_suggestions(file_path, response)
 
     -- Show diff for this suggestion
     vim.schedule(function()
-      diff.show_range(bufnr, line_num, line_num, table.concat(modified_lines, '\n'), description)
 
       vim.notify(string.format("DRY tag suggestion for %s in %s:%d",
         func_name, rel_path, line_num), vim.log.levels.INFO)

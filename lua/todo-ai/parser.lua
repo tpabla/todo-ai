@@ -317,29 +317,17 @@ function M.parse_json_response(response, result)
     return
   end
 
-  -- Handle new schema format (optimized)
+  -- Handle schema format (changes array for SEARCH/REPLACE)
   if data.changes then
     result.changes = data.changes
   end
 
-  if data.edits then
-    result.edits = data.edits
-  end
-
-  if data.code_snippet then
-    result.code_snippet = data.code_snippet
+  if data.language then
+    result.language = data.language
   end
 
   if data.explanation then
     result.explanation = data.explanation
-  end
-
-  if data.new_file then
-    result.new_file = data.new_file
-  end
-
-  if data.replace_buffer then
-    result.replace_buffer = data.replace_buffer
   end
 
   if data.thinking then

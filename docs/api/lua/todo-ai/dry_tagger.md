@@ -10,12 +10,6 @@ DryTagger
 
 ## Functions
 
-### M.suggest_dry_tags
-
-```lua
-function M.suggest_dry_tags()
-```
-
 ### M.analyze_file_for_dry_tags
 
 ```lua
@@ -34,5 +28,11 @@ function M.process_dry_suggestions(file_path, response)
 
 **Parameters:**
 
-- `response` (table): 
 - `file_path` (string): 
+- `response` (table): 
+
+### M.suggest_dry_tags
+
+```lua
+function M.suggest_dry_tags()
+```

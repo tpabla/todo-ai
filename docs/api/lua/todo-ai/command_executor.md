@@ -11,6 +11,21 @@ CommandExecutor
 
 ## Functions
 
+### M.execute_sync
+
+```lua
+function M.execute_sync(cmd, opts)
+```
+
+**Parameters:**
+
+- `opts?` (table): Options
+- `cmd` (string[]): Command array
+
+**Returns:**
+
+- boolean success, string|nil output, string|nil error
+
 ### M.execute_async
 
 ```lua
@@ -22,21 +37,6 @@ function M.execute_async(cmd, opts, callback)
 - `cmd` (string[]): Command array
 - `callback` (function(success:): boolean, output: string|nil, error: string|nil)
 - `opts` (table): Options
-
-### M.execute_sync
-
-```lua
-function M.execute_sync(cmd, opts)
-```
-
-**Parameters:**
-
-- `cmd` (string[]): Command array
-- `opts?` (table): Options
-
-**Returns:**
-
-- boolean success, string|nil output, string|nil error
 
 ### M.execute
 

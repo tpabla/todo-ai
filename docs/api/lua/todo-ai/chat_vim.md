@@ -37,10 +37,52 @@ ChatVim
 
 ## Functions
 
-### M.clear_input
+### M.add_response
 
 ```lua
-function M.clear_input()
+function M.add_response(content)
+```
+
+**Parameters:**
+
+- `content` (string): 
+
+### M.clear_conversation
+
+```lua
+function M.clear_conversation()
+```
+
+### M.close
+
+```lua
+function M.close()
+```
+
+### M.get_input
+
+```lua
+function M.get_input()
+```
+
+**Returns:**
+
+- string|nil
+
+### M.build_context
+
+```lua
+function M.build_context()
+```
+
+**Returns:**
+
+- table
+
+### M.setup_autocmds
+
+```lua
+function M.setup_autocmds()
 ```
 
 ### M.open
@@ -55,15 +97,11 @@ function M.open()
 function M.setup_keybindings()
 ```
 
-### M.handle_code_changes
+### M.send_message
 
 ```lua
-function M.handle_code_changes(changes)
+function M.send_message()
 ```
-
-**Parameters:**
-
-- `changes` (table[]): 
 
 ### M.initialize_buffer
 
@@ -71,16 +109,16 @@ function M.handle_code_changes(changes)
 function M.initialize_buffer()
 ```
 
-### M.setup_autocmds
+### M.move_to_input
 
 ```lua
-function M.setup_autocmds()
+function M.move_to_input()
 ```
 
-### M.close
+### M.update_buffer
 
 ```lua
-function M.close()
+function M.update_buffer()
 ```
 
 ### M.add_message_to_buffer
@@ -91,31 +129,9 @@ function M.add_message_to_buffer(lines, role, content)
 
 **Parameters:**
 
-- `role` (string): 
 - `lines` (string[]): 
+- `role` (string): 
 - `content` (string): 
-
-### M.update_buffer
-
-```lua
-function M.update_buffer()
-```
-
-### M.get_input
-
-```lua
-function M.get_input()
-```
-
-**Returns:**
-
-- string|nil
-
-### M.clear_conversation
-
-```lua
-function M.clear_conversation()
-```
 
 ### M.new_conversation
 
@@ -123,11 +139,21 @@ function M.clear_conversation()
 function M.new_conversation()
 ```
 
-### M.send_message
+### M.clear_input
 
 ```lua
-function M.send_message()
+function M.clear_input()
 ```
+
+### M.handle_code_changes
+
+```lua
+function M.handle_code_changes(changes)
+```
+
+**Parameters:**
+
+- `changes` (table[]): 
 
 ### M.process_message
 
@@ -138,29 +164,3 @@ function M.process_message(message)
 **Parameters:**
 
 - `message` (string): 
-
-### M.build_context
-
-```lua
-function M.build_context()
-```
-
-**Returns:**
-
-- table
-
-### M.move_to_input
-
-```lua
-function M.move_to_input()
-```
-
-### M.add_response
-
-```lua
-function M.add_response(content)
-```
-
-**Parameters:**
-
-- `content` (string): 

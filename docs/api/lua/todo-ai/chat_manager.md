@@ -5,10 +5,10 @@
 @field MAX_MESSAGES number Maximum messages to keep in memory
 @field MAX_MESSAGE_LENGTH number Maximum length per message
 
-## Class: ChatManager
+## Class: ChatState
 
 ```lua
-ChatManager
+ChatState
 ```
 
 ### Fields
@@ -61,10 +61,10 @@ Message
 - **timestamp** (`number`): 
 - **token_estimate** (`number`): 
 
-## Class: ChatState
+## Class: ChatManager
 
 ```lua
-ChatState
+ChatManager
 ```
 
 ### Fields
@@ -91,10 +91,46 @@ ChatState
 
 ## Functions
 
-### M.cleanup_old_messages
+### M.get_stats
 
 ```lua
-function M.cleanup_old_messages()
+function M.get_stats()
+```
+
+**Returns:**
+
+- table
+
+### M.hide_thinking
+
+```lua
+function M.hide_thinking()
+```
+
+### M.clear
+
+```lua
+function M.clear()
+```
+
+### M.render_messages
+
+```lua
+function M.render_messages(max_lines)
+```
+
+**Parameters:**
+
+- `max_lines` (number|nil): 
+
+**Returns:**
+
+- string[]
+
+### M.update_display
+
+```lua
+function M.update_display()
 ```
 
 ### M.add_message
@@ -113,44 +149,6 @@ function M.add_message(role, content)
 - number
 - boolean success
 
-### M.show_thinking
-
-```lua
-function M.show_thinking(model)
-```
-
-**Parameters:**
-
-- `model` (string|nil): 
-
-### M.clear
-
-```lua
-function M.clear()
-```
-
-### M.hide_thinking
-
-```lua
-function M.hide_thinking()
-```
-
-### M.update_display
-
-```lua
-function M.update_display()
-```
-
-### M.get_stats
-
-```lua
-function M.get_stats()
-```
-
-**Returns:**
-
-- table
-
 ### M.get_recent_messages
 
 ```lua
@@ -165,22 +163,24 @@ function M.get_recent_messages(max_tokens)
 
 - Message[]
 
-### M.render_messages
+### M.cleanup_old_messages
 
 ```lua
-function M.render_messages(max_lines)
+function M.cleanup_old_messages()
 ```
-
-**Parameters:**
-
-- `max_lines` (number|nil): 
-
-**Returns:**
-
-- string[]
 
 ### M.cleanup_by_tokens
 
 ```lua
 function M.cleanup_by_tokens()
 ```
+
+### M.show_thinking
+
+```lua
+function M.show_thinking(model)
+```
+
+**Parameters:**
+
+- `model` (string|nil): 

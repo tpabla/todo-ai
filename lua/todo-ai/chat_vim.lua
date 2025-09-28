@@ -420,7 +420,7 @@ end
 ---Handle code changes from AI
 ---@param changes table[]
 function M.handle_code_changes(changes)
-  local diff = require('todo-ai.diff_mini')
+  local diff = require('todo-ai.diff_native')
   local init = require('todo-ai.init')
 
   if #changes > 0 then
@@ -428,8 +428,6 @@ function M.handle_code_changes(changes)
     local change = changes[1]
     local bufnr = vim.api.nvim_get_current_buf()
 
-    diff.show_range(bufnr, change.start_line, change.end_line,
-                   change.code, change.description)
 
     init.state.pending_diff = {
       changes = changes,
