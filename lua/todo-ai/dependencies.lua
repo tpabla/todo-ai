@@ -7,30 +7,9 @@ function M.check_dependencies()
       name = 'render-markdown.nvim',
       repo = 'MeanderingProgrammer/markdown.nvim',
       config = function()
-        require('render-markdown').setup({
-          -- Enable for todo-ai chat buffers
-          file_types = { 'markdown', 'todo-ai-chat' },
-          -- Customize rendering for chat
-          code = {
-            enabled = true,
-            sign = false,
-            width = 'full',
-            position = 'left',
-          },
-          heading = {
-            enabled = true,
-            sign = false,
-            icons = {},
-          },
-          bullet = {
-            enabled = true,
-            icons = { '•', '◦', '▪', '▫' },
-          },
-          quote = {
-            enabled = true,
-            icon = '┃',
-          },
-        })
+        -- Don't call setup() to avoid overriding user config
+        -- Instead, just ensure render-markdown is available
+        -- User config and todo-ai highlight overrides are handled separately
       end,
       optional = false,
     },
@@ -123,29 +102,9 @@ function M.suggest_installation(missing)
 end
 
 function M.setup_render_markdown()
-  -- Try to setup render-markdown if available
-  local ok, render_md = pcall(require, 'render-markdown')
-  if ok then
-    -- Additional setup for todo-ai specific rendering
-    vim.api.nvim_create_autocmd('FileType', {
-      pattern = 'todo-ai-chat',
-      callback = function(ev)
-        -- Enable render-markdown for our chat buffers
-        vim.bo[ev.buf].filetype = 'markdown'
-
-        -- Keep some buffer-local settings
-        vim.bo[ev.buf].buftype = 'nofile'
-        vim.bo[ev.buf].swapfile = false
-        vim.bo[ev.buf].modifiable = true
-
-        -- Trigger render-markdown
-        vim.cmd('RenderMarkdown enable')
-      end
-    })
-
-    return true
-  end
-  return false
+  -- Just check if render-markdown is available, don't configure it
+  local ok = pcall(require, 'render-markdown')
+  return ok
 end
 
 return M

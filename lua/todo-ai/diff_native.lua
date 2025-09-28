@@ -14,6 +14,7 @@ M.state = {
   diff_showing = false,
   accepted_diffs = {}, -- Track which diffs are accepted (by index)
   rejected_diffs = {}, -- Track which diffs are rejected (by index)
+  has_padding = false, -- Track if we added padding line
 }
 
 -- Build visual display applying accepted changes
@@ -24,38 +25,39 @@ function M.build_search_replace_display(original_lines, changes)
   -- Track regions for navigation
   local regions = search_replace.track_change_regions(original_lines, changes, M.state.rejected_diffs)
 
-  -- NEW: Track where each change appears in the DISPLAY buffer
-  -- This is critical for highlighting to work correctly
-  local current_display_line = 1
-  local content = table.concat(original_lines, '\n')
-
+  -- Track where each change appears in the DISPLAY buffer
+  -- This is simpler: since display_lines already has the replacements applied,
+  -- we just need to find where each replacement text appears
   for i, change in ipairs(changes) do
     if not M.state.rejected_diffs[i] then
-      -- Find where this change is in the original
-      local start_pos = content:find(change.search, 1, true)
+      -- Find the hunk that matches this change index
+      for h, hunk in ipairs(M.state.hunks) do
+        if hunk.change_index == i then
+          -- For display positions, find where the replacement appears in display_lines
+          local display_text = table.concat(display_lines, '\n')
+          local replace_start = display_text:find(change.replace, 1, true)
 
-      if start_pos then
-        -- Calculate how many lines come before this change
-        local before_content = content:sub(1, start_pos - 1)
-        local lines_before = select(2, before_content:gsub('\n', '\n'))
+          if replace_start then
+            -- Calculate line number from character position
+            local before_replace = display_text:sub(1, replace_start - 1)
+            local display_line = select(2, before_replace:gsub('\n', '\n')) + 1
+            local replace_lines = vim.split(change.replace, '\n', { plain = true })
 
-        -- The replacement lines
-        local replacement_lines = vim.split(change.replace, '\n', { plain = true })
+            -- Set display positions
+            M.state.hunks[h].display_start = display_line
+            M.state.hunks[h].display_end = display_line + #replace_lines - 1
+            M.state.hunks[h].search_text = change.search
+            M.state.hunks[h].replace_text = change.replace
+            M.state.hunks[h].description = change.description or ""
+            -- todo_text is already set in the hunk from earlier
 
-        -- Update hunk with DISPLAY positions (where the replacement actually appears)
-        if M.state.hunks[i] then
-          M.state.hunks[i].display_start = current_display_line + lines_before
-          M.state.hunks[i].display_end = current_display_line + lines_before + #replacement_lines - 1
-          M.state.hunks[i].search_text = change.search
-          M.state.hunks[i].replace_text = change.replace
-
-          -- Keep original positions for reference
-          M.state.hunks[i].start_line = lines_before + 1
-          M.state.hunks[i].end_line = lines_before + select(2, change.search:gsub('\n', '\n')) + 1
+            -- Log for debugging
+            local logger = require('todo-ai.logger')
+            logger.info('diff_native', string.format('Hunk %d: display_start=%d, display_end=%d',
+              h, M.state.hunks[h].display_start, M.state.hunks[h].display_end))
+          end
+          break
         end
-
-        -- Update content for next iteration (apply this change)
-        content = content:sub(1, start_pos - 1) .. change.replace .. content:sub(start_pos + #change.search)
       end
     end
   end
@@ -65,7 +67,7 @@ end
 
 
 -- Show SEARCH/REPLACE changes with awesome visual highlighting
-function M.show_response(target_buf, response)
+function M.show_response(target_buf, response, todo_text)
   local logger = require('todo-ai.logger')
   logger.info('diff_native', 'show_response called')
 
@@ -123,6 +125,7 @@ function M.show_response(target_buf, response)
         search = change.search,
         replace = change.replace,
         description = change.description or ("Change " .. i),
+        todo_text = todo_text or "",  -- Store the raw TODO text
         type = 'search_replace',
         language = response.language or vim.bo[target_buf].filetype or 'text',
         start_line = start_line,
@@ -134,6 +137,33 @@ function M.show_response(target_buf, response)
 
   -- Build the visual SEARCH/REPLACE display
   local display_lines = M.build_search_replace_display(lines, response.changes)
+
+  -- Check if we need to add an empty line at the start for header placement
+  local needs_padding = false
+  for _, hunk in ipairs(M.state.hunks) do
+    if hunk.display_start == 1 or hunk.start_line == 1 then
+      needs_padding = true
+      break
+    end
+  end
+
+  -- Add empty line at start if needed for proper header placement
+  M.state.has_padding = needs_padding
+  if needs_padding then
+    logger.info('diff_native', 'Adding empty line at start for header placement')
+    table.insert(display_lines, 1, '')
+
+    -- Adjust all hunk positions by 1
+    for _, hunk in ipairs(M.state.hunks) do
+      if hunk.display_start then
+        hunk.display_start = hunk.display_start + 1
+      end
+      if hunk.display_end then
+        hunk.display_end = hunk.display_end + 1
+      end
+      -- start_line and end_line remain unchanged as they refer to original positions
+    end
+  end
 
   -- Store the lines we'll apply when accepting changes
   M.state.modified_lines = M.apply_unified_changes()
@@ -208,39 +238,84 @@ function M.setup_inline_diff_view(target_buf, original_lines, display_lines, pre
 
   logger.info('diff_native', string.format('Buffer showing SEARCH/REPLACE blocks'))
 
-  -- Use formatter module for visual formatting
-  formatter.apply_formatting(target_buf, M.state.hunks, M.state, M.state.ns_id)
+  -- Use formatter module for visual formatting and cursor positioning
+  -- Schedule to ensure buffer is ready for extmarks
+  vim.schedule(function()
+    logger.info('diff_native', 'Scheduled formatting application starting')
 
-  -- Restore cursor position if saved, otherwise jump to first change
-  if saved_cursor then
-    -- Restore the saved cursor position
+    -- Check if namespace is still valid
+    local ns_exists = pcall(vim.api.nvim_get_namespaces)
+    logger.info('diff_native', string.format('Namespace check: ns_id=%d, exists=%s', M.state.ns_id, tostring(ns_exists)))
+
+    -- Log window and buffer settings that might affect virtual text display
     for _, win in ipairs(vim.api.nvim_list_wins()) do
       if vim.api.nvim_win_get_buf(win) == target_buf then
-        -- Ensure cursor position is within bounds
-        local line_count = vim.api.nvim_buf_line_count(target_buf)
-        local line = math.min(saved_cursor[1], line_count)
-        vim.api.nvim_win_set_cursor(win, {line, saved_cursor[2]})
-        break
+        local conceallevel = vim.wo[win].conceallevel
+        local concealcursor = vim.wo[win].concealcursor
+        local wrap = vim.wo[win].wrap
+        local list = vim.wo[win].list
+        logger.info('diff_native', string.format('Window settings: conceallevel=%d, concealcursor=%s, wrap=%s, list=%s',
+          conceallevel, concealcursor, tostring(wrap), tostring(list)))
       end
     end
-  elseif #M.state.hunks > 0 and M.state.hunks[1].start_line then
-    -- Only jump to first change on initial load
-    local first_line = math.max(1, math.min(M.state.hunks[1].start_line, vim.api.nvim_buf_line_count(target_buf)))
-    for _, win in ipairs(vim.api.nvim_list_wins()) do
-      if vim.api.nvim_win_get_buf(win) == target_buf then
-        vim.api.nvim_win_set_cursor(win, {first_line, 0})
-        break
+
+    formatter.apply_formatting(target_buf, M.state.hunks, M.state, M.state.ns_id)
+
+    -- Log extmark count after formatting
+    local all_marks = vim.api.nvim_buf_get_extmarks(target_buf, M.state.ns_id, 0, -1, {})
+    logger.info('diff_native', string.format('After formatting: %d total extmarks in buffer', #all_marks))
+
+    -- Log details about virtual text marks specifically
+    for _, mark in ipairs(all_marks) do
+      local details = vim.api.nvim_buf_get_extmark_by_id(target_buf, M.state.ns_id, mark[1], {details = true})
+      if #details > 0 and details[3] then
+        if details[3].virt_lines_above or details[3].virt_lines then
+          logger.info('diff_native', string.format('Virtual text mark at line %d: virt_lines_above=%s, virt_lines=%s',
+            details[1], tostring(details[3].virt_lines_above ~= nil), tostring(details[3].virt_lines ~= nil)))
+        end
       end
     end
-  end
+
+    -- Restore cursor position AFTER formatting is applied
+    if saved_cursor then
+      -- Restore the saved cursor position
+      for _, win in ipairs(vim.api.nvim_list_wins()) do
+        if vim.api.nvim_win_get_buf(win) == target_buf then
+          -- Ensure cursor position is within bounds
+          local line_count = vim.api.nvim_buf_line_count(target_buf)
+          local line = math.min(saved_cursor[1], line_count)
+          vim.api.nvim_win_set_cursor(win, {line, saved_cursor[2]})
+          break
+        end
+      end
+    elseif #M.state.hunks > 0 and M.state.hunks[1].start_line then
+      -- Only jump to first change on initial load
+      local first_line = M.state.hunks[1].display_start or M.state.hunks[1].start_line
+      -- Adjust for padding if needed
+      if M.state.has_padding and first_line == 1 then
+        first_line = 2  -- Skip the padding line
+      end
+      first_line = math.max(1, math.min(first_line, vim.api.nvim_buf_line_count(target_buf)))
+      for _, win in ipairs(vim.api.nvim_list_wins()) do
+        if vim.api.nvim_win_get_buf(win) == target_buf then
+          vim.api.nvim_win_set_cursor(win, {first_line, 0})
+          break
+        end
+      end
+    end
+  end)
 
   M.state.diff_showing = true
 end
 
 -- Clear the inline diff display
 function M.clear_inline_diff()
+  local logger = require('todo-ai.logger')
+  logger.info('diff_native', 'clear_inline_diff called')
+
   -- Clear virtual text and highlights
   if M.state.ns_id and M.state.target_buf then
+    logger.info('diff_native', string.format('Clearing namespace %d for buffer %d', M.state.ns_id, M.state.target_buf))
     vim.api.nvim_buf_clear_namespace(M.state.target_buf, M.state.ns_id, 0, -1)
   end
 
@@ -349,6 +424,52 @@ end
 -- Apply all accepted changes
 function M.apply_changes(bufnr)
   return M.apply_all()
+end
+
+-- Debug function to check virtual text visibility
+function M.debug_headers()
+  if not M.state.ns_id or not M.state.target_buf then
+    print("No active diff display")
+    return
+  end
+
+  local buf = M.state.target_buf
+  local ns_id = M.state.ns_id
+
+  -- Get all extmarks
+  local marks = vim.api.nvim_buf_get_extmarks(buf, ns_id, 0, -1, {details = true})
+  local virt_count = 0
+  local header_lines = {}
+
+  for _, mark in ipairs(marks) do
+    local row, col, details = mark[2], mark[3], mark[4]
+    if details.virt_lines_above or details.virt_lines then
+      virt_count = virt_count + 1
+      table.insert(header_lines, row + 1)  -- Convert 0-based to 1-based
+
+      -- Extract first line of virtual text for display
+      local virt_text = ""
+      local virt_lines = details.virt_lines or {}
+      if #virt_lines > 0 then
+        for _, chunk in ipairs(virt_lines[1] or {}) do
+          virt_text = virt_text .. chunk[1]
+        end
+      end
+
+      print(string.format("Header %d at line %d: %s", virt_count, row + 1, virt_text:sub(1, 40)))
+    end
+  end
+
+  if virt_count == 0 then
+    print("No virtual text headers found!")
+    print(string.format("Total extmarks: %d", #marks))
+  else
+    print(string.format("\n%d headers found at lines: %s", virt_count, table.concat(header_lines, ", ")))
+    print("\nIf you don't see these headers visually, check:")
+    print("  - Terminal/font support for Unicode characters")
+    print("  - Color scheme compatibility")
+    print("  - Window settings (conceallevel, wrap, etc.)")
+  end
 end
 
 -- Navigate to next hunk

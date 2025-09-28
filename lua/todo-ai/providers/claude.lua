@@ -325,11 +325,30 @@ function M.chat_async(messages, opts, callback)
     -- Extract content from Claude response
     if response.content and #response.content > 0 then
       local content = response.content[1].text
+
+      -- For chat mode, first try to parse as JSON to check for mode
+      local json_ok, json_data = pcall(vim.fn.json_decode, content)
+      if json_ok and json_data.mode == "chat" then
+        -- Pure chat response - just return the explanation as content
+        callback({
+          mode = "chat",
+          content = json_data.explanation or content,
+          explanation = json_data.explanation
+        }, nil)
+        return
+      end
+
+      -- Otherwise, use the standard parser for SEARCH/REPLACE responses
       local parse_success, parsed = pcall(parser.parse, content, 'claude')
       if parse_success then
         callback(parsed, nil)
       else
-        callback(nil, 'Parser error: ' .. tostring(parsed))
+        -- Fallback: if parsing fails, treat as plain content
+        callback({
+          mode = "chat",
+          content = content,
+          explanation = content
+        }, nil)
       end
     else
       callback(nil, 'No content in response. Full response: ' .. vim.fn.json_encode(response))

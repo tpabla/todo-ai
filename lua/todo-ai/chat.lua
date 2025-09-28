@@ -13,7 +13,7 @@ M.state = {
   edit_preview_buf = nil  -- Buffer showing edit preview
 }
 
--- Thinking animation frames
+-- Thinking animation frames with more visual flair
 M.thinking_frames = {
   '`🤔 Thinking`',
   '`🤔 Thinking.`',
@@ -27,18 +27,32 @@ M.thinking_frames = {
   '`🧠 Analyzing.`',
   '`🧠 Analyzing..`',
   '`🧠 Analyzing...`',
+  '`✨ Generating`',
+  '`✨ Generating.`',
+  '`✨ Generating..`',
+  '`✨ Generating...`',
+  '`🔮 Contemplating`',
+  '`🔮 Contemplating.`',
+  '`🔮 Contemplating..`',
+  '`🔮 Contemplating...`',
+  '`⚡ Computing`',
+  '`⚡ Computing.`',
+  '`⚡ Computing..`',
+  '`⚡ Computing...`',
 }
 
 function M.create()
   -- Create display buffer for chat messages
   M.state.display_buf = vim.api.nvim_create_buf(false, true)
-  vim.bo[M.state.display_buf].filetype = 'markdown'
-  vim.bo[M.state.display_buf].modifiable = false
-  vim.bo[M.state.display_buf].buftype = 'nofile'
-  vim.bo[M.state.display_buf].swapfile = false
 
-  -- Set buffer name
+  -- Set buffer name first (needed for filetype detection)
   vim.api.nvim_buf_set_name(M.state.display_buf, 'Todo-AI Chat')
+
+  -- Use custom filetype that inherits markdown
+  vim.bo[M.state.display_buf].filetype = 'todoai-chat'
+  vim.bo[M.state.display_buf].buftype = ''  -- Allow :w to work
+  vim.bo[M.state.display_buf].swapfile = false
+  vim.bo[M.state.display_buf].bufhidden = 'hide'
 
   -- Enable render-markdown if available
   M.enable_render_markdown(M.state.display_buf)
@@ -80,10 +94,14 @@ function M.open(buf)
     buf = M.create()
   end
 
+  -- Store the current window to return focus to it later
+  local original_win = vim.api.nvim_get_current_win()
+
   -- Check if chat window is already open
   if M.state.win and vim.api.nvim_win_is_valid(M.state.win) then
-    -- Window exists, just focus it
-    vim.api.nvim_set_current_win(M.state.win)
+    -- Window exists, don't focus it, just render
+    M.render()
+    M.setup_input()
     return
   end
 
@@ -92,7 +110,9 @@ function M.open(buf)
     local win_buf = vim.api.nvim_win_get_buf(win)
     if win_buf == M.state.display_buf then
       M.state.win = win
-      vim.api.nvim_set_current_win(win)
+      -- Don't focus the window, just store the reference
+      M.render()
+      M.setup_input()
       return
     end
   end
@@ -143,6 +163,12 @@ function M.open(buf)
   vim.wo[M.state.win].relativenumber = false
   vim.wo[M.state.win].signcolumn = 'no'
 
+  -- Set window statusline with help text
+  vim.wo[M.state.win].statusline = '%#StatusLine# :w to send | <CR> to send | q to close %=%#StatusLineNC# Todo-AI Chat '
+
+  -- Return focus to the original window
+  vim.api.nvim_set_current_win(original_win)
+
   -- Render messages
   M.render()
 
@@ -151,38 +177,298 @@ function M.open(buf)
 end
 
 function M.setup_input()
-  -- Create input area at bottom
+  -- Set up direct editing in the chat buffer
   local buf = M.state.display_buf
-  vim.api.nvim_buf_set_keymap(buf, 'n', 'i', ':lua require("todo-ai.chat").start_input()<CR>', {
-    noremap = true,
-    silent = true
+
+  -- Track the last known input line to detect actual changes
+  M.state.last_input_line = ""
+
+  -- Set up autocmd to capture saves as message sends
+  vim.api.nvim_create_autocmd('BufWriteCmd', {
+    buffer = buf,
+    callback = function()
+      -- Find the input line by looking for the marker
+      local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+      local input_idx = nil
+
+      -- Find "## Your message:" and get the line 2 below it (skip blank line)
+      for i, line in ipairs(lines) do
+        if line:match("^## Your message:") then
+          input_idx = i + 2  -- Skip header and blank line
+          break
+        end
+      end
+
+      if input_idx and input_idx <= #lines then
+        local input = vim.trim(lines[input_idx] or "")
+
+        -- Only process if this is actually new input (not empty and different from last)
+        if input ~= '' and input ~= M.state.last_input_line then
+          -- Store this as the last input to prevent re-sending
+          M.state.last_input_line = input
+
+          -- Add user message
+          M.add_message('user', input)
+
+          -- Clear the input line immediately in the buffer
+          lines[input_idx] = ''
+          vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+
+          -- Now send to backend (which will show thinking animation)
+          vim.schedule(function()
+            M.send_to_backend(input)
+          end)
+        end
+      end
+      -- Mark as saved to prevent the "unsaved changes" warning
+      vim.bo[buf].modified = false
+    end
   })
-  vim.api.nvim_buf_set_keymap(buf, 'n', 'a', ':lua require("todo-ai.chat").start_input()<CR>', {
+
+  -- Position cursor at input line when opening (but stay in normal mode)
+  vim.schedule(function()
+    if vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_win_is_valid(M.state.win) then
+      local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+      -- Find "## Your message:" and position cursor 2 lines below
+      for i, line in ipairs(lines) do
+        if line:match("^## Your message:") then
+          local input_line = i + 2  -- Skip header and blank line
+          if input_line <= #lines then
+            vim.api.nvim_win_set_cursor(M.state.win, {input_line, 0})
+            -- Stay in normal mode (don't call startinsert)
+          end
+          break
+        end
+      end
+    end
+  end)
+
+  -- Alternative: Map Enter key in normal mode to send if there's text
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<CR>', ':lua require("todo-ai.chat").send_if_changed()<CR>', {
     noremap = true,
-    silent = true
+    silent = true,
+    desc = 'Send message if input has changed'
   })
-  vim.api.nvim_buf_set_keymap(buf, 'n', '<CR>', ':lua require("todo-ai.chat").send_message()<CR>', {
-    noremap = true,
-    silent = true
-  })
+
   vim.api.nvim_buf_set_keymap(buf, 'n', 'q', ':lua require("todo-ai.chat").close()<CR>', {
     noremap = true,
     silent = true
   })
 end
 
-function M.start_input()
-  -- Create a simple input prompt
-  local input = vim.fn.input('Message: ')
-  if input and input ~= '' then
-    M.add_message('user', input)
-    M.send_to_backend(input)
+-- Send message if input has changed (for Enter key mapping)
+function M.send_if_changed()
+  local buf = M.state.display_buf
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+
+  -- Find and process input line
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local input_idx = nil
+
+  for i, line in ipairs(lines) do
+    if line:match("^## Your message:") then
+      input_idx = i + 2
+      break
+    end
+  end
+
+  if input_idx and input_idx <= #lines then
+    local input = vim.trim(lines[input_idx] or "")
+    if input ~= '' and input ~= M.state.last_input_line then
+      M.state.last_input_line = input
+      M.add_message('user', input)
+      lines[input_idx] = ''
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+      vim.schedule(function()
+        M.send_to_backend(input)
+      end)
+    end
   end
 end
 
-function M.send_message()
-  -- Alias for start_input, called when pressing Enter
-  M.start_input()
+-- Initialize or get current session
+function M.init_session()
+  if not M.state.session_id then
+    -- Generate session ID with timestamp
+    M.state.session_id = os.date('%Y%m%d_%H%M%S') .. '_' .. math.random(1000, 9999)
+    M.state.session_start = os.date('%Y-%m-%d %H:%M:%S')
+  end
+  return M.state.session_id
+end
+
+-- Clean up old chat sessions
+function M.cleanup_old_sessions(max_sessions)
+  local config = require('todo-ai.config')
+  max_sessions = max_sessions or config.get('max_chat_sessions') or 10
+
+  local project_root = vim.fn.getcwd()
+  local chat_dir = project_root .. '/.todoai/chats'
+
+  -- Get all chat files
+  local files = vim.fn.glob(chat_dir .. '/*.md', false, true)
+
+  if #files > max_sessions then
+    -- Sort by modification time (oldest first)
+    local file_times = {}
+    for _, file in ipairs(files) do
+      local stat = vim.loop.fs_stat(file)
+      if stat then
+        table.insert(file_times, {file = file, mtime = stat.mtime.sec})
+      end
+    end
+
+    table.sort(file_times, function(a, b) return a.mtime < b.mtime end)
+
+    -- Delete oldest files beyond max_sessions
+    local to_delete = #file_times - max_sessions
+    for i = 1, to_delete do
+      vim.fn.delete(file_times[i].file)
+    end
+  end
+end
+
+-- Save chat history to session file
+function M.save_chat_history()
+  local project_root = vim.fn.getcwd()
+  local chat_dir = project_root .. '/.todoai/chats'
+
+  -- Create directory if it doesn't exist
+  vim.fn.mkdir(chat_dir, 'p')
+
+  -- Get or create session
+  local session_id = M.init_session()
+  local chat_file = chat_dir .. '/' .. session_id .. '.md'
+
+  -- Build chat history content
+  local content = {}
+  table.insert(content, '# Todo-AI Chat Session: ' .. session_id)
+  table.insert(content, 'Started: ' .. (M.state.session_start or os.date('%Y-%m-%d %H:%M:%S')))
+  table.insert(content, 'Last Updated: ' .. os.date('%Y-%m-%d %H:%M:%S'))
+  table.insert(content, '')
+  table.insert(content, '## Messages')
+  table.insert(content, '')
+
+  for _, msg in ipairs(M.state.messages) do
+    if not msg.is_thinking then
+      table.insert(content, '### ' .. (msg.role == 'user' and '👤 User' or '🤖 AI') .. ' _[' .. msg.timestamp .. ']_')
+      table.insert(content, '')
+      -- Properly indent message content
+      local msg_lines = vim.split(msg.content or '', '\n')
+      for _, line in ipairs(msg_lines) do
+        table.insert(content, line)
+      end
+      table.insert(content, '')
+      table.insert(content, '---')
+      table.insert(content, '')
+    end
+  end
+
+  -- Write to file
+  local file = io.open(chat_file, 'w')
+  if file then
+    file:write(table.concat(content, '\n'))
+    file:close()
+  end
+
+  -- Clean up old sessions
+  M.cleanup_old_sessions()
+end
+
+-- Load a previous chat session
+function M.load_session(session_id)
+  local project_root = vim.fn.getcwd()
+  local chat_file = project_root .. '/.todoai/chats/' .. session_id .. '.md'
+
+  if vim.fn.filereadable(chat_file) == 1 then
+    local file = io.open(chat_file, 'r')
+    if file then
+      local content = file:read('*all')
+      file:close()
+
+      -- Parse the session file to restore messages
+      -- This is a simplified parser - could be enhanced
+      M.state.messages = {}
+      M.state.session_id = session_id
+
+      -- Simple parsing of the markdown format
+      local in_message = false
+      local current_role = nil
+      local current_content = {}
+      local current_time = nil
+
+      for line in content:gmatch("[^\n]+") do
+        if line:match("^### 👤 User %[(.-)%]") then
+          -- Save previous message if any
+          if current_role and #current_content > 0 then
+            M.add_message(current_role, table.concat(current_content, '\n'))
+          end
+          -- Start new user message
+          current_role = 'user'
+          current_time = line:match("%[(.-)%]")
+          current_content = {}
+          in_message = true
+        elseif line:match("^### 🤖 AI %[(.-)%]") then
+          -- Save previous message if any
+          if current_role and #current_content > 0 then
+            M.add_message(current_role, table.concat(current_content, '\n'))
+          end
+          -- Start new AI message
+          current_role = 'ai'
+          current_time = line:match("%[(.-)%]")
+          current_content = {}
+          in_message = true
+        elseif line:match("^---") then
+          -- End of message
+          if current_role and #current_content > 0 then
+            M.add_message(current_role, table.concat(current_content, '\n'))
+          end
+          current_role = nil
+          current_content = {}
+          in_message = false
+        elseif in_message and not line:match("^#") then
+          -- Part of message content
+          table.insert(current_content, line)
+        end
+      end
+
+      -- Don't forget last message if file doesn't end with ---
+      if current_role and #current_content > 0 then
+        M.add_message(current_role, table.concat(current_content, '\n'))
+      end
+
+      return true
+    end
+  end
+  return false
+end
+
+-- List available chat sessions
+function M.list_sessions()
+  local project_root = vim.fn.getcwd()
+  local chat_dir = project_root .. '/.todoai/chats'
+
+  local files = vim.fn.glob(chat_dir .. '/*.md', false, true)
+  local sessions = {}
+
+  for _, file in ipairs(files) do
+    local filename = vim.fn.fnamemodify(file, ':t:r')
+    local stat = vim.loop.fs_stat(file)
+    if stat then
+      table.insert(sessions, {
+        id = filename,
+        file = file,
+        mtime = os.date('%Y-%m-%d %H:%M:%S', stat.mtime.sec),
+        size = stat.size
+      })
+    end
+  end
+
+  -- Sort by modification time (newest first)
+  table.sort(sessions, function(a, b) return a.mtime > b.mtime end)
+
+  return sessions
 end
 
 function M.add_message(role, content)
@@ -192,6 +478,34 @@ function M.add_message(role, content)
     timestamp = os.date('%H:%M')
   })
   M.render()
+
+  -- Auto-save chat history to file
+  M.save_chat_history()
+end
+
+-- Lock the buffer from editing
+function M.lock_buffer()
+  if M.state.display_buf and vim.api.nvim_buf_is_valid(M.state.display_buf) then
+    vim.bo[M.state.display_buf].modifiable = false
+    vim.bo[M.state.display_buf].modified = false
+  end
+end
+
+-- Unlock the buffer for editing with treesitter protection
+function M.unlock_buffer()
+  if M.state.display_buf and vim.api.nvim_buf_is_valid(M.state.display_buf) then
+    -- Temporarily disable treesitter highlighting during updates
+    pcall(vim.treesitter.stop, M.state.display_buf)
+    vim.bo[M.state.display_buf].modifiable = true
+  end
+end
+
+-- Re-enable markdown highlighting after updates
+function M.enable_highlighting()
+  if M.state.display_buf and vim.api.nvim_buf_is_valid(M.state.display_buf) then
+    -- Re-enable treesitter for markdown highlighting
+    pcall(vim.treesitter.start, M.state.display_buf)
+  end
 end
 
 function M.render()
@@ -227,14 +541,22 @@ function M.render()
     table.insert(lines, '')
   end
 
-  -- Add input hint
+  -- Add input section
   table.insert(lines, '')
-  table.insert(lines, '_Press `i` to send a message, `q` to close_')
+  table.insert(lines, '## Your message:')
+  table.insert(lines, '')
+  -- Add placeholder for user input (this line will be editable)
+  table.insert(lines, '')  -- This is the input line - always empty after render
 
-  -- Update buffer
-  vim.bo[M.state.display_buf].modifiable = true
+  -- Reset the last input line tracker when re-rendering
+  M.state.last_input_line = ""
+
+  -- Update buffer using lock/unlock pattern like codecompanion
+  M.unlock_buffer()
   vim.api.nvim_buf_set_lines(M.state.display_buf, 0, -1, false, lines)
-  vim.bo[M.state.display_buf].modifiable = false
+  -- Re-enable highlighting after update
+  M.enable_highlighting()
+  -- Keep unlocked for user editing
 
   -- Scroll to bottom
   if M.state.win and vim.api.nvim_win_is_valid(M.state.win) then
@@ -276,10 +598,69 @@ function M.send_to_backend(message)
   -- Prepare messages for chat
   local messages = {}
 
-  -- Add context as system message
+  -- Build comprehensive system message with schema and context
+  local prompt_builder = require('todo-ai.prompt_builder')
+  local schema = require('todo-ai.schema')
+  local context = require('todo-ai.context')
+
+  -- Create a rich context description
+  local context_description = {}
+  table.insert(context_description, schema.get_schema_description())
+  table.insert(context_description, "\n\n=== CODEBASE CONTEXT ===")
+
+  -- Load generated project context from .todoai/context.md
+  local generated_context = context.load_context()
+  if generated_context then
+    table.insert(context_description, "\n=== GENERATED PROJECT CONTEXT ===")
+    table.insert(context_description, generated_context)
+  else
+    -- If no generated context, try to get basic context
+    local basic_context = context.get_context_for_prompt()
+    if basic_context then
+      table.insert(context_description, "\n=== PROJECT CONTEXT ===")
+      table.insert(context_description, basic_context)
+    end
+  end
+
+  -- Add current buffer info
+  if context_info.current_buffer then
+    local buf = context_info.current_buffer
+    local buf_name = vim.api.nvim_buf_get_name(buf)
+    local buf_lines = vim.api.nvim_buf_get_lines(buf, 0, math.min(100, vim.api.nvim_buf_line_count(buf)), false)
+    table.insert(context_description, string.format("\n=== CURRENT FILE ===\nFile: %s", buf_name))
+    table.insert(context_description, "Content (first 100 lines):")
+    table.insert(context_description, "```" .. vim.bo[buf].filetype)
+    table.insert(context_description, table.concat(buf_lines, "\n"))
+    table.insert(context_description, "```")
+  end
+
+  -- Add open buffers summary with metadata
+  if context_info.open_buffers and #context_info.open_buffers > 0 then
+    table.insert(context_description, "\n=== OTHER OPEN FILES ===")
+    for _, buf_info in ipairs(context_info.open_buffers) do
+      local metadata = {}
+      if buf_info.has_todos then table.insert(metadata, "has TODOs") end
+      if buf_info.function_count and buf_info.function_count > 0 then
+        table.insert(metadata, buf_info.function_count .. " functions")
+      end
+      if buf_info.class_count and buf_info.class_count > 0 then
+        table.insert(metadata, buf_info.class_count .. " classes")
+      end
+      local metadata_str = #metadata > 0 and " (" .. table.concat(metadata, ", ") .. ")" or ""
+      table.insert(context_description, string.format("- %s [%s]%s",
+        buf_info.path, buf_info.filetype or "unknown", metadata_str))
+    end
+  end
+
+  -- Add TODO context if available
+  if context_info.todo then
+    table.insert(context_description, string.format("\n=== CURRENT TODO ===\n%s", context_info.todo))
+  end
+
+  -- Add system message with all context
   table.insert(messages, {
     role = 'system',
-    content = 'You have access to the following open buffers: ' .. vim.fn.json_encode(context_info)
+    content = table.concat(context_description, "\n")
   })
 
   -- Add chat history
@@ -309,72 +690,56 @@ function M.send_to_backend(message)
     if error then
       M.add_message('ai', '❌ **Error**: ' .. error)
     else
-      -- Check if we have formatted response with thinking
-      if response.thinking_formatted then
-        -- Add thinking section
-        M.add_message('ai', response.thinking_formatted)
-      end
-
-      -- Add main content
-      local content = response.content or ""
-
-      -- Check for code in response
-      if response.code and response.code ~= "" then
-        if content == "" then
-          content = "### 📄 Generated Code\n```" .. (vim.bo.filetype or "") .. "\n" .. response.code .. "\n```"
-        end
-      end
-
-      -- Add explanation if present
-      if response.explanation and response.explanation ~= "" and response.explanation ~= "Generated code" then
-        if content ~= "" then
-          content = content .. "\n\n"
-        end
-        content = content .. "### 💬 Explanation\n" .. response.explanation
-      end
-
-      -- If still no content, use fallback
-      if content == "" then
-        content = response.raw_response or "No response received"
-      end
-
-      -- Check for edit commands in the response
-      M.process_edit_commands(content)
-
-      if content ~= "" then
+      -- Check response mode (new dual-mode support)
+      if response.mode == "chat" then
+        -- Pure conversational response - just display the message
+        local content = response.explanation or response.content or "No response received"
         M.add_message('ai', content)
-      end
-
-      -- Handle code changes based on new schema
-      if response.changes and #response.changes > 0 then
-        local diff = require('todo-ai.diff_native')
-
-        -- Store current buffer for changes
-        local target_buf = context_info.current_buffer
-
-        -- Check if this is a new file creation
-        if response.new_file then
-          -- Create new file and apply changes
-          local content = response.changes[1].code
-          M.create_new_file(response.new_file, content)
-        elseif response.replace_buffer then
-          -- Replace entire buffer
-          local full_code = response.changes[1].code
-          diff.show_full_buffer(target_buf, full_code, response.explanation or "")
-          init.state.pending_diff = response
-          init.state.pending_diff.is_full_buffer = true
-        else
-          -- Apply multiple changes as edits
-          M.queue_changes(target_buf, response.changes, response.explanation)
+      elseif response.mode == "changes" or (response.changes and #response.changes > 0) then
+        -- Code changes mode - handle as before
+        -- Check if we have formatted response with thinking
+        if response.thinking_formatted then
+          -- Add thinking section
+          M.add_message('ai', response.thinking_formatted)
         end
-      elseif response.code_snippet then
-        -- Just display code snippet in chat, no buffer changes
-        local snippet_display = "```" .. (vim.bo.filetype or "") .. "\n" .. response.code_snippet .. "\n```"
-        if response.explanation then
-          M.add_message('ai', response.explanation .. "\n\n" .. snippet_display)
-        else
-          M.add_message('ai', snippet_display)
+
+        -- Add explanation if present
+        local content = ""
+        if response.explanation and response.explanation ~= "" then
+          content = "### 💬 Explanation\n" .. response.explanation
         end
+
+        if content ~= "" then
+          M.add_message('ai', content)
+        end
+
+        -- Handle code changes
+        if response.changes and #response.changes > 0 then
+          local diff = require('todo-ai.diff_native')
+
+          -- Store current buffer for changes
+          local target_buf = context_info.current_buffer
+
+          -- Check if this is a new file creation
+          if response.new_file then
+            -- Create new file and apply changes
+            local content = response.changes[1].code
+            M.create_new_file(response.new_file, content)
+          elseif response.replace_buffer then
+            -- Replace entire buffer
+            local full_code = response.changes[1].code
+            diff.show_full_buffer(target_buf, full_code, response.explanation or "")
+            init.state.pending_diff = response
+            init.state.pending_diff.is_full_buffer = true
+          else
+            -- Apply multiple changes as edits
+            M.queue_changes(target_buf, response.changes, response.explanation)
+          end
+        end
+      else
+        -- Fallback for old-style responses
+        local content = response.content or response.raw_response or "No response received"
+        M.add_message('ai', content)
       end
     end
   end)
@@ -406,8 +771,8 @@ function M.show_thinking(model_name)
   -- Add thinking message only if there isn't one already
   local last_msg = M.state.messages[#M.state.messages]
   if not (last_msg and last_msg.is_thinking) then
-    -- Show thinking animation on one line, model on the next in grey
-    local content = M.thinking_frames[1] .. '\n_' .. model .. '_'
+    -- Show thinking animation
+    local content = M.thinking_frames[1]
     table.insert(M.state.messages, {
       role = 'ai',
       content = content,
@@ -418,18 +783,17 @@ function M.show_thinking(model_name)
     M.render()  -- Full render for new message
   end
 
-  -- Start animation timer (slower at 750ms)
+  -- Start animation timer with slower speed to reduce flicker (1000ms)
   M.state.thinking_frame = 1
-  M.state.thinking_timer = vim.fn.timer_start(750, function()
+  M.state.thinking_timer = vim.fn.timer_start(1000, function()
     if M.state.messages[#M.state.messages] and M.state.messages[#M.state.messages].is_thinking then
       M.state.thinking_frame = M.state.thinking_frame + 1
       if M.state.thinking_frame > #M.thinking_frames then
         M.state.thinking_frame = 1
       end
-      -- Update thinking animation but keep model name on separate line
+      -- Update thinking animation
       local thinking_msg = M.state.messages[#M.state.messages]
-      local model = thinking_msg.model_name or 'AI'
-      thinking_msg.content = M.thinking_frames[M.state.thinking_frame] .. '\n_' .. model .. '_'
+      thinking_msg.content = M.thinking_frames[M.state.thinking_frame]
       M.update_thinking_line()  -- Efficient update just for the thinking line
     end
   end, {['repeat'] = -1})
@@ -439,6 +803,15 @@ function M.update_thinking_line()
   -- More efficient update - just update the thinking message line
   if not M.state.display_buf or not vim.api.nvim_buf_is_valid(M.state.display_buf) then
     return
+  end
+
+  -- Only update if chat window is not currently focused to avoid disrupting editing
+  if M.state.win and vim.api.nvim_win_is_valid(M.state.win) then
+    local current_win = vim.api.nvim_get_current_win()
+    if current_win == M.state.win then
+      -- User is actively editing in chat window, skip update to prevent cursor jumping
+      return
+    end
   end
 
   -- Find the last AI message line in the buffer
@@ -460,24 +833,24 @@ function M.update_thinking_line()
       local content_lines = vim.split(thinking_msg.content, '\n')
 
       -- Update the content lines after the header
-      vim.bo[M.state.display_buf].modifiable = true
+      -- Only update the thinking animation line (skip the blank line after header)
+      -- ai_line is "**AI** _(timestamp):"
+      -- ai_line + 1 is blank line
+      -- ai_line + 2 is the thinking animation
+      local thinking_line_idx = ai_line + 2
+      if thinking_line_idx <= #lines then
+        -- Store current buffer state to avoid flicker
+        local was_modifiable = vim.bo[M.state.display_buf].modifiable
 
-      -- Figure out how many lines to replace (could be 1 or 2)
-      local end_line = math.min(ai_line + 3, #lines + 1)  -- At most 2 lines after header
-      vim.api.nvim_buf_set_lines(M.state.display_buf, ai_line + 1, end_line, false, content_lines)
+        -- Make buffer modifiable without triggering treesitter restart
+        vim.bo[M.state.display_buf].modifiable = true
 
-      vim.bo[M.state.display_buf].modifiable = false
+        -- Only replace the single thinking line
+        vim.api.nvim_buf_set_lines(M.state.display_buf, thinking_line_idx - 1, thinking_line_idx, false, content_lines)
 
-      -- Keep scroll at bottom if we were there
-      if M.state.win and vim.api.nvim_win_is_valid(M.state.win) then
-        local cursor = vim.api.nvim_win_get_cursor(M.state.win)
-        if cursor[1] >= #lines - 5 then  -- If near bottom, stay at bottom
-          vim.api.nvim_win_set_cursor(M.state.win, {vim.api.nvim_buf_line_count(M.state.display_buf), 0})
-        end
+        -- Restore original modifiable state
+        vim.bo[M.state.display_buf].modifiable = was_modifiable
       end
-    else
-      -- Fallback to full render if we can't find the right line
-      M.render()
     end
   end
 end
@@ -508,10 +881,29 @@ function M.get_open_buffers_context()
         local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
         local filetype = vim.bo[bufnr].filetype
 
-        -- Limit content size (first 100 lines for context)
+        -- For conversational mode, we'll send more context
+        -- Include full content for small files, first 200 lines for large files
         local content_lines = {}
-        for i = 1, math.min(#lines, 100) do
+        local line_limit = #lines <= 300 and #lines or 200
+        for i = 1, math.min(#lines, line_limit) do
           table.insert(content_lines, lines[i])
+        end
+
+        -- Extract key information from the file
+        local has_todos = false
+        local function_count = 0
+        local class_count = 0
+
+        for _, line in ipairs(lines) do
+          if line:match('TODO') or line:match('FIXME') then
+            has_todos = true
+          end
+          if line:match('^%s*def ') or line:match('^%s*function ') then
+            function_count = function_count + 1
+          end
+          if line:match('^%s*class ') then
+            class_count = class_count + 1
+          end
         end
 
         table.insert(buffers, {
@@ -521,7 +913,10 @@ function M.get_open_buffers_context()
           filetype = filetype,
           content = table.concat(content_lines, '\n'),
           line_count = #lines,
-          modified = vim.bo[bufnr].modified
+          modified = vim.bo[bufnr].modified,
+          has_todos = has_todos,
+          function_count = function_count,
+          class_count = class_count
         })
       end
     end

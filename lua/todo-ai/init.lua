@@ -22,7 +22,7 @@ function M.setup(opts)
   -- Check dependencies
   local deps = require('todo-ai.dependencies')
   deps.check_dependencies()
-  deps.setup_render_markdown()
+
 
   -- Setup optional integrations
   local integrations = require('todo-ai.integrations')
@@ -140,8 +140,13 @@ function M.process_todo(todo, bufnr)
 
     -- Display changes (SEARCH/REPLACE format)
     if response.changes then
-      -- Use new optimized diff display
-      diff.show_response(bufnr, response)
+      -- Use new optimized diff display, passing the full raw TODO line
+      local todo_text = ""
+      if M.state.current_todo then
+        -- Use the full_line which contains the complete TODO including "TODO: @ai"
+        todo_text = M.state.current_todo.full_line or ("TODO: @ai " .. M.state.current_todo.instruction)
+      end
+      diff.show_response(bufnr, response, todo_text)
       M.state.pending_diff = response
     else
       -- No diff to display

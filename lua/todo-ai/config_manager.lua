@@ -61,6 +61,7 @@ M.defaults = {
   auto_scan_on_save = true,
   auto_generate_context = false,
   show_thinking = true,
+  max_chat_sessions = 10,  -- Maximum number of chat sessions to keep
 
   -- Keybindings (can be overridden)
   keymaps = {

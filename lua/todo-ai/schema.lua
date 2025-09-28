@@ -1,13 +1,30 @@
 local M = {}
 
--- JSON Schema for AI responses (SEARCH/REPLACE format)
+-- Markdown formatting requirements for chat responses
+M.markdown_format = {
+  code_blocks = "Use triple backticks with language identifier: ```lua, ```python, etc.",
+  inline_code = "Use single backticks for inline code: `variable_name`",
+  headers = "Use ## for main sections, ### for subsections",
+  lists = "Use - or * for unordered lists, 1. 2. 3. for ordered lists",
+  emphasis = "Use **bold** for important terms, *italic* for emphasis",
+  links = "Use [text](url) format for links",
+  tables = "Use | for table columns with |---|---| separator"
+}
+
+-- JSON Schema for AI responses (SEARCH/REPLACE format or chat-only)
 M.response_schema = {
   type = "object",
   properties = {
-    -- Array of SEARCH/REPLACE blocks (required)
+    -- Mode indicator - either "changes" or "chat"
+    mode = {
+      type = "string",
+      enum = { "changes", "chat" },
+      description = "Response mode: 'changes' for code modifications, 'chat' for conversational response"
+    },
+    -- Array of SEARCH/REPLACE blocks (required only for mode="changes")
     changes = {
       type = "array",
-      description = "Array of SEARCH/REPLACE changes",
+      description = "Array of SEARCH/REPLACE changes (only when mode='changes')",
       items = {
         type = "object",
         properties = {
@@ -32,13 +49,14 @@ M.response_schema = {
       type = "string",
       description = "File language/type (python, javascript, json, etc.)"
     },
-    -- Required explanation
+    -- For mode="changes": explanation of changes
+    -- For mode="chat": the conversational response
     explanation = {
       type = "string",
-      description = "Overall explanation of all changes"
+      description = "For changes mode: explanation of changes. For chat mode: the response message formatted as proper markdown with code blocks, lists, headers, etc."
     }
   },
-  required = { "changes", "explanation" }
+  required = { "mode", "explanation" }
 }
 
 -- Use centralized prompt configuration

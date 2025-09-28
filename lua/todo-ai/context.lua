@@ -1,7 +1,6 @@
 -- Project context generator and manager
 local M = {}
 
-local utils = require('todo-ai.utils')
 local logger = require('todo-ai.logger')
 
 -- Context file path

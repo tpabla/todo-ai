@@ -43,6 +43,16 @@ M.json_format = {
   }
 }
 
+-- Markdown formatting requirements for chat mode
+M.markdown_requirements = {
+  "Format all code examples in fenced code blocks with language tags",
+  "Use proper markdown headers (##, ###) for structure",
+  "Create lists with - or * for bullets, 1. 2. for numbered items",
+  "Emphasize key terms with **bold** and *italic*",
+  "Use `backticks` for inline code references",
+  "Structure responses with clear sections and formatting"
+}
+
 -- Build the complete schema description
 function M.get_schema_description()
   local rules = {}
@@ -51,29 +61,43 @@ function M.get_schema_description()
   end
 
   return string.format([[
-CRITICAL: Respond with ONLY pure JSON - no markdown, no backticks, no code blocks!
+CRITICAL: Respond with ONLY pure JSON - no markdown wrapping around the JSON itself!
 
-**MANDATORY RULE**: Minimize the number of changes! If you're making 5+ changes, you're doing it wrong!
-- Combine ALL continuous/adjacent changes into ONE diff
-- Group related functions (like recipe methods) into ONE diff
-- Target 1-3 changes MAXIMUM, not 5-7
+FIRST, DETERMINE THE RESPONSE MODE:
+- If the user is asking for code changes, modifications, or fixes: use mode="changes"
+- If the user is asking questions, requesting explanations, or having a conversation: use mode="chat"
 
-RESPONSE FORMAT: Raw JSON object following this EXACT schema:
+RESPONSE FORMAT: Raw JSON object with ONE of these two structures:
 
+FOR CODE CHANGES (mode="changes"):
 {
+  "mode": "changes",
   "changes": [                         // REQUIRED array of SEARCH/REPLACE changes
     {
       "search": "string (REQUIRED)",   // EXACT text to search for in the file
       "replace": "string (REQUIRED)",  // Complete replacement text
-      "description": "string"           // Optional brief description
+      "description": "string"           // Brief description referencing the TODO
     }
   ],
   "language": "string (auto-detected)", // File language/type
   "explanation": "string (REQUIRED)"    // Overall transformation summary
 }
 
+FOR CONVERSATIONAL RESPONSES (mode="chat"):
+{
+  "mode": "chat",
+  "explanation": "string (REQUIRED)"    // Your response in PROPER MARKDOWN format:
+                                        // MUST include when relevant:
+                                        // - Fenced code blocks: ```lua\ncode here\n```
+                                        // - Headers: ## Section Name
+                                        // - Lists: - item or 1. item
+                                        // - Emphasis: **bold**, *italic*
+                                        // - Inline code: `code`
+                                        // The content MUST be valid markdown that renders properly
+}
+
 DO NOT wrap the JSON in ```json``` or any other markdown formatting!
-Return ONLY the raw JSON object with "changes", "language", and "explanation" fields.
+Return ONLY the raw JSON object.
 
 IMPORTANT RULES:
 %s

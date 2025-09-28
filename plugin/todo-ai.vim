@@ -21,6 +21,7 @@ command! -range TodoAIInteractive lua require('todo-ai.visual').process_visual_s
 command! TodoAIScanProject lua require('todo-ai').process_project_todos()
 command! TodoAIAcceptAll lua require('todo-ai').accept_all_project_changes()
 command! TodoAILogs lua vim.cmd('split /tmp/todo-ai.log | setlocal autoread | normal! G')
+command! TodoAIDebugHeaders lua require('todo-ai.diff_native').debug_headers()
 
 " Edit queue commands
 command! TodoAIEditAccept lua require('todo-ai.chat').accept_current_edit()
