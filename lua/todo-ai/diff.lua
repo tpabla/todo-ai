@@ -373,20 +373,33 @@ function M.populate_quickfix()
 
   vim.fn.setqflist(qf_list, 'r')
 
-  -- Switch to target buffer before opening quickfix to avoid chat window
-  local current_win = vim.api.nvim_get_current_win()
-  local current_buf_name = vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(current_win))
+  -- Always ensure quickfix opens in the target buffer window, not chat
+  local target_win = nil
 
-  if current_buf_name:match('Todo%-AI Chat') then
-    -- Find a non-chat window to open quickfix in
+  -- First try to find a window with the target buffer
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local win_buf = vim.api.nvim_win_get_buf(win)
+    if win_buf == M.state.target_buf then
+      target_win = win
+      break
+    end
+  end
+
+  -- If no window has the target buffer, find any non-chat window
+  if not target_win then
     for _, win in ipairs(vim.api.nvim_list_wins()) do
       local win_buf = vim.api.nvim_win_get_buf(win)
       local win_buf_name = vim.api.nvim_buf_get_name(win_buf)
       if not win_buf_name:match('Todo%-AI Chat') then
-        vim.api.nvim_set_current_win(win)
+        target_win = win
         break
       end
     end
+  end
+
+  -- Switch to the target window and open quickfix
+  if target_win then
+    vim.api.nvim_set_current_win(target_win)
   end
 
   vim.cmd('copen')
@@ -417,7 +430,13 @@ function M.refresh_display()
       -- For new files, the replace content IS the entire file
       new_lines = vim.split(changes_to_apply[1].replace, '\n')
     else
-      new_lines = search_replace.apply_changes(new_lines, changes_to_apply)
+      local result, applied_count, errors = search_replace.apply_changes(new_lines, changes_to_apply)
+      new_lines = result
+      if errors then
+        vim.api.nvim_echo({{'❌ Failed to apply changes: ' .. errors, 'ErrorMsg'}}, false, {})
+        require('todo-ai.logger').error('SEARCH/REPLACE errors: ' .. errors)
+        return
+      end
     end
   end
 
@@ -674,7 +693,13 @@ function M.apply_accepted()
       -- For new files, use the replace content as the entire file
       final_lines = vim.split(accepted_changes[1].replace, '\n')
     else
-      final_lines = search_replace.apply_changes(M.state.original_lines, accepted_changes)
+      local result, applied_count, errors = search_replace.apply_changes(M.state.original_lines, accepted_changes)
+      final_lines = result
+      if errors then
+        vim.api.nvim_echo({{'❌ Failed to apply accepted changes: ' .. errors, 'ErrorMsg'}}, false, {})
+        require('todo-ai.logger').error('SEARCH/REPLACE errors in apply_all: ' .. errors)
+        return false
+      end
     end
   end
 
