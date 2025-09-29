@@ -61,16 +61,22 @@ function M.create()
     -- Create display buffer for chat messages
     M.state.display_buf = vim.api.nvim_create_buf(false, true)
 
-    -- Set buffer name first (needed for filetype detection)
-    vim.api.nvim_buf_set_name(M.state.display_buf, 'Todo-AI Chat')
+    -- Set buffer name without a file path (using special buffer naming)
+    pcall(vim.api.nvim_buf_set_name, M.state.display_buf, 'Todo-AI Chat')
   end
 
   -- Always reconfigure the buffer settings
   -- Use custom filetype that inherits markdown
   vim.bo[M.state.display_buf].filetype = 'todoai-chat'
-  vim.bo[M.state.display_buf].buftype = ''  -- Allow :w to work
+  vim.bo[M.state.display_buf].buftype = 'nofile'  -- This is a special buffer, not a file
   vim.bo[M.state.display_buf].swapfile = false
   vim.bo[M.state.display_buf].bufhidden = 'hide'
+  vim.bo[M.state.display_buf].modifiable = true  -- Allow modifications
+  vim.bo[M.state.display_buf].modified = false  -- Mark as not modified
+
+  -- Map :w to send message in chat buffer (instead of trying to save)
+  vim.api.nvim_buf_set_keymap(M.state.display_buf, 'c', 'w<CR>', '<Cmd>lua require("todo-ai.chat").send_message()<CR>', {silent = true})
+  vim.api.nvim_buf_set_keymap(M.state.display_buf, 'c', 'wq<CR>', '<Cmd>lua require("todo-ai.chat").send_message()<CR><Cmd>q<CR>', {silent = true})
 
   -- Enable render-markdown if available
   M.enable_render_markdown(M.state.display_buf)
@@ -261,11 +267,18 @@ function M.setup_input()
     end
   end)
 
-  -- Alternative: Map Enter key in normal mode to send if there's text
+  -- Map Enter key in normal mode to send if there's text
   vim.api.nvim_buf_set_keymap(buf, 'n', '<CR>', ':lua require("todo-ai.chat").send_if_changed()<CR>', {
     noremap = true,
     silent = true,
     desc = 'Send message if input has changed'
+  })
+
+  -- Map Ctrl+Enter in insert mode to send message
+  vim.api.nvim_buf_set_keymap(buf, 'i', '<C-CR>', '<Esc>:lua require("todo-ai.chat").send_message()<CR>', {
+    noremap = true,
+    silent = true,
+    desc = 'Send message'
   })
 
   vim.api.nvim_buf_set_keymap(buf, 'n', 'q', ':lua require("todo-ai.chat").close()<CR>', {
@@ -495,6 +508,29 @@ function M.add_message(role, content)
     content = content,
     timestamp = os.date('%H:%M')
   })
+
+  -- Auto-prune old messages if history gets too long
+  -- Keep system messages and recent messages
+  if #M.state.messages > 200 then  -- Hard limit of 200 messages in memory
+    local new_messages = {}
+    local kept = 0
+
+    -- Keep last 100 messages
+    for i = math.max(1, #M.state.messages - 100), #M.state.messages do
+      table.insert(new_messages, M.state.messages[i])
+      kept = kept + 1
+    end
+
+    -- Add a system message about pruning
+    table.insert(new_messages, 1, {
+      role = 'system',
+      content = string.format('💾 Auto-pruned %d old messages to manage memory', #M.state.messages - kept),
+      timestamp = os.date('%H:%M')
+    })
+
+    M.state.messages = new_messages
+  end
+
   M.render()
 
   -- Auto-save chat history to file
@@ -576,6 +612,9 @@ function M.render()
   M.enable_highlighting()
   -- Keep unlocked for user editing
 
+  -- Mark buffer as not modified since this is just a display
+  vim.bo[M.state.display_buf].modified = false
+
   -- Ensure we stay in normal mode unless user is actively editing
   local current_win = vim.api.nvim_get_current_win()
   if M.state.win and vim.api.nvim_win_is_valid(M.state.win) then
@@ -583,8 +622,14 @@ function M.render()
       -- If chat window is not focused, ensure it's in normal mode
       vim.cmd('stopinsert')
     end
-    -- Scroll to bottom
-    vim.api.nvim_win_set_cursor(M.state.win, {#lines, 0})
+    -- Scroll to bottom (ensure valid position)
+    if M.state.display_buf and vim.api.nvim_buf_is_valid(M.state.display_buf) then
+      local line_count = vim.api.nvim_buf_line_count(M.state.display_buf)
+      if line_count > 0 then
+        -- Use pcall to handle any edge cases with cursor positioning
+        pcall(vim.api.nvim_win_set_cursor, M.state.win, {line_count, 0})
+      end
+    end
   end
 end
 
@@ -592,9 +637,69 @@ function M.send_to_backend(message)
   local unified_prompt = require('todo-ai.unified_prompt')
   local target_buf = unified_prompt.find_target_buffer()
 
+  -- Build conversation history with smart limits
+  local config = require('todo-ai.config')
+  local conv_config = config.get('conversation') or {}
+
+  local conversation_history = {}
+  local total_chars = 0
+  local max_total_chars = conv_config.max_total_chars or 50000  -- ~12k tokens
+  local max_messages = conv_config.max_messages or 20            -- 10 exchanges
+  local max_msg_length = conv_config.max_message_length or 4000  -- Per message limit
+
+  -- Process messages in reverse to prioritize recent context
+  local messages_to_process = {}
+  for i = #M.state.messages, 1, -1 do
+    local msg = M.state.messages[i]
+    if msg.role and msg.content and not msg.is_thinking then
+      table.insert(messages_to_process, 1, msg)
+      if #messages_to_process >= max_messages then
+        break
+      end
+    end
+  end
+
+  -- Build history with size limits
+  for _, msg in ipairs(messages_to_process) do
+    -- Convert our internal roles to standard LLM roles
+    local role = msg.role
+    if role == 'ai' then
+      role = 'assistant'
+    end
+
+    if role == 'user' or role == 'assistant' then
+      local content = msg.content
+
+      -- Truncate very long messages (like file dumps)
+      if #content > max_msg_length then
+        content = content:sub(1, max_msg_length) .. "\n\n[... truncated for context limit ...]"
+      end
+
+      -- Check total size limit
+      if total_chars + #content > max_total_chars then
+        -- If we're close to limit, add a summary message and stop
+        if #conversation_history > 0 then
+          table.insert(conversation_history, 1, {
+            role = 'system',
+            content = string.format('[Previous %d messages truncated due to context limits]',
+              #messages_to_process - #conversation_history)
+          })
+        end
+        break
+      end
+
+      table.insert(conversation_history, {
+        role = role,
+        content = content
+      })
+      total_chars = total_chars + #content
+    end
+  end
+
   unified_prompt.process({
     instruction = message,
-    bufnr = target_buf
+    bufnr = target_buf,
+    conversation_history = conversation_history
   })
 end
 
@@ -607,6 +712,13 @@ end
 
 function M.clear()
   M.state.messages = {}
+  M.render()
+end
+
+-- Clear conversation history (new session)
+function M.clear_history()
+  M.state.messages = {}
+  M.add_message('system', '🔄 Conversation history cleared. Starting fresh!')
   M.render()
 end
 

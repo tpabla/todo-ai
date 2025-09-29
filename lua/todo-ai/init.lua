@@ -1,6 +1,6 @@
 local M = {}
 local scanner = require('todo-ai.scanner')
-local diff = require('todo-ai.diff_native')
+local diff = require('todo-ai.diff')
 local chat = require('todo-ai.chat')
 local config = require('todo-ai.config')
 -- Providers will be loaded after config setup
@@ -15,6 +15,10 @@ M.state = {
 function M.setup(opts)
   config.setup(opts or {})
 
+  -- Initialize logger with config
+  local logger = require('todo-ai.logger')
+  logger.init(config.config)
+
   -- Load providers after config is set up
   providers = require('todo-ai.providers')
   providers.setup()
@@ -27,6 +31,11 @@ function M.setup(opts)
   -- Setup optional integrations
   local integrations = require('todo-ai.integrations')
   integrations.setup_all()
+
+  -- Add command to view logs
+  vim.api.nvim_create_user_command('TodoAILogs', function()
+    vim.cmd('edit ' .. logger.LOG_FILE)
+  end, {desc = 'View Todo-AI debug logs'})
 
   -- mini.diff handles its own highlights
 
@@ -160,29 +169,11 @@ function M.get_surrounding_lines(lines, target_line, radius)
 end
 
 function M.accept_change()
-  if not M.state.pending_diff then
-    vim.notify('No pending changes to accept', vim.log.levels.INFO)
-    return
-  end
-
-  diff.accept(M.state.current_todo)
-  M.state.pending_diff = nil
-  M.state.current_todo = nil
-
-  vim.notify('Changes accepted', vim.log.levels.INFO)
+  diff.accept_all()
 end
 
 function M.reject_change()
-  if not M.state.pending_diff then
-    vim.notify('No pending changes to reject', vim.log.levels.INFO)
-    return
-  end
-
-  diff.reject()
-  M.state.pending_diff = nil
-  M.state.current_todo = nil
-
-  vim.notify('Changes rejected', vim.log.levels.INFO)
+  diff.reject_all()
 end
 
 function M.format_response(response)

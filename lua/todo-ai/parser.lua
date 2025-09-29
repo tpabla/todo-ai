@@ -311,38 +311,34 @@ function M.parse_xml_structured(response, result)
 end
 
 function M.parse_json_response(response, result)
-  local ok, data = pcall(vim.fn.json_decode, response)
-  if not ok then
-    logger.error('Failed to parse JSON response', { error = data })
+  -- Check if JSON looks complete first
+  if not response:match('}%s*$') then
+    logger.error('Incomplete JSON response - missing closing brace')
+    result.parse_error = "JSON response appears incomplete (no closing }). Response may have been cut off due to length or timeout."
     return
   end
 
-  -- Handle schema format (changes array for SEARCH/REPLACE)
-  if data.changes then
-    result.changes = data.changes
+  local ok, data = pcall(vim.fn.json_decode, response)
+  if not ok then
+    logger.error('Failed to parse JSON response', { error = data })
+    -- Return the raw error - don't try to recover
+    result.parse_error = "JSON parsing failed: " .. tostring(data)
+    return
   end
 
-  if data.language then
-    result.language = data.language
-  end
+  -- DIRECT ASSIGNMENT - No guessing, just copy what's there
+  -- The validator will check if required fields are present
 
-  if data.explanation then
-    result.explanation = data.explanation
-  end
+  result.mode = data.mode
+  result.filename = data.filename
+  result.changes = data.changes
+  result.language = data.language
+  result.explanation = data.explanation
 
-  if data.thinking then
-    -- Store thinking separately
-    result.thinking = { thinking = data.thinking }
-    result.thinking_formatted = M.format_thinking({ thinking = data.thinking })
-  end
+  -- Store raw data for debugging
+  result.raw_json = data
 
-  result.parsed_sections = data
-
-  logger.debug('JSON response parsed', {
-    has_code = result.code ~= nil,
-    has_explanation = result.explanation ~= nil,
-    has_thinking = result.thinking ~= nil
-  })
+  logger.debug('JSON response parsed - fields extracted directly')
 end
 
 function M.parse_markdown_formatted(response, result)

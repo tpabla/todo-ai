@@ -11,7 +11,7 @@ M.defaults = {
 
     -- Model parameters
     temperature = 0.7,
-    max_tokens = 4096,
+    max_tokens = 8192,
 
     -- Plugin behavior
     auto_scan = false,   -- Auto-scan on buffer write
@@ -61,7 +61,30 @@ M.defaults = {
         render_markdown = {
             enabled = true,
         }
-    }
+    },
+
+    -- LSP context settings
+    lsp_context = {
+        enabled = true,           -- Include LSP data in AI context
+        include_diagnostics = true, -- Include errors/warnings
+        include_symbols = true,    -- Include document symbols/outline
+        include_hover = true,      -- Include type info at cursor
+        include_all_buffers = true, -- Include LSP diagnostics from all open buffers
+        max_diagnostics = 10,      -- Max number of diagnostics to include per buffer
+        max_buffer_diagnostics = 5, -- Max diagnostic details per other buffer
+        timeout = 1000,           -- Timeout for LSP requests in ms
+    },
+
+    -- Conversation history settings
+    conversation = {
+        max_messages = 50,        -- Maximum number of messages to keep in history (25 exchanges)
+        max_total_chars = 50000,  -- Maximum total characters in history (~12k tokens)
+        max_message_length = 4000, -- Truncate individual messages longer than this
+        auto_clear_on_error = false, -- Clear history on API errors to recover
+    },
+
+    -- Debug settings
+    log_level = 'DEBUG',  -- 'DEBUG', 'INFO', 'WARN', 'ERROR'
 }
 
 M.config = {}

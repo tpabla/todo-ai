@@ -383,6 +383,57 @@ function M.extract_function_name(line)
   return func_name
 end
 
+-- Scan project for common coding patterns
+function M.scan_for_patterns()
+  local patterns = {}
+  local files = vim.fn.glob("**/*.lua", false, true)
+
+  local pattern_counts = {}
+
+  for _, file in ipairs(files) do
+    if vim.fn.filereadable(file) == 1 then
+      local lines = vim.fn.readfile(file)
+      for _, line in ipairs(lines) do
+        line = line:gsub("^%s+", ""):gsub("%s+$", "")
+
+        -- Common patterns to look for
+        local common_patterns = {
+          "local ok, .* = pcall%(.*%)",  -- pcall pattern
+          "if not .* then",              -- error checking
+          "vim%.api%.nvim_.*",           -- nvim API calls
+          "require%(.*%)",               -- module loading
+          "local .* = require%(.*%)",    -- require assignment
+          "function .*%(.*%)",           -- function definitions
+        }
+
+        for _, pattern_regex in ipairs(common_patterns) do
+          if line:match(pattern_regex) then
+            local clean_line = line:gsub("%s+", " ")
+            pattern_counts[clean_line] = (pattern_counts[clean_line] or 0) + 1
+          end
+        end
+      end
+    end
+  end
+
+  -- Sort by frequency and take top patterns
+  local sorted_patterns = {}
+  for pattern, count in pairs(pattern_counts) do
+    if count >= 2 then  -- Pattern appears at least twice
+      table.insert(sorted_patterns, {pattern = pattern, count = count})
+    end
+  end
+
+  table.sort(sorted_patterns, function(a, b) return a.count > b.count end)
+
+  -- Take top 5 patterns
+  for i = 1, math.min(5, #sorted_patterns) do
+    table.insert(patterns, "-- " .. sorted_patterns[i].pattern)
+  end
+
+  return patterns
+end
+
 -- Get DRY (Don't Repeat Yourself) hints - reusable functions
 function M.get_dry_hints()
   local hints = {}
@@ -401,22 +452,16 @@ function M.get_dry_hints()
   end
   table.insert(hints, "")
 
-  table.insert(hints, "### Common Patterns to Reuse")
-  table.insert(hints, "```lua")
-  table.insert(hints, "-- Error handling pattern")
-  table.insert(hints, "local ok, result = pcall(risky_function)")
-  table.insert(hints, "if not ok then")
-  table.insert(hints, "  logger.error('context', result)")
-  table.insert(hints, "  return nil, result")
-  table.insert(hints, "end")
-  table.insert(hints, "")
-  table.insert(hints, "-- Buffer validation pattern")
-  table.insert(hints, "local valid, err = vim.api.nvim_buf_is_valid(bufnr)")
-  table.insert(hints, "if not valid then return false, err end")
-  table.insert(hints, "")
-  table.insert(hints, "-- Async API call pattern")
-  table.insert(hints, "retry_manager.execute_with_retry_async(fn, service, config, callback)")
-  table.insert(hints, "```")
+  -- Add common patterns found in this project
+  local patterns = M.scan_for_patterns()
+  if #patterns > 0 then
+    table.insert(hints, "### Common Patterns to Reuse")
+    table.insert(hints, "```lua")
+    for _, pattern in ipairs(patterns) do
+      table.insert(hints, pattern)
+    end
+    table.insert(hints, "```")
+  end
 
   return table.concat(hints, '\n')
 end
@@ -428,18 +473,7 @@ function M.generate_full()
   table.insert(lines, "# Project Context")
   table.insert(lines, "")
 
-  -- Compact auto-generated section
-  table.insert(lines, "## Auto-Generated (Compact)")
-  table.insert(lines, "```")
-  table.insert(lines, M.generate_compact())
-  table.insert(lines, "```")
-  table.insert(lines, "")
-
-  -- DRY hints for code reuse
-  table.insert(lines, M.get_dry_hints())
-  table.insert(lines, "")
-
-  -- Human notes section (protected)
+  -- Human notes section FIRST (protected)
   table.insert(lines, "## Human Notes (Protected)")
   table.insert(lines, "<!-- BEGIN_HUMAN_SECTION -->")
 
@@ -462,6 +496,17 @@ function M.generate_full()
   end
 
   table.insert(lines, "<!-- END_HUMAN_SECTION -->")
+  table.insert(lines, "")
+
+  -- Compact auto-generated section
+  table.insert(lines, "## Auto-Generated (Compact)")
+  table.insert(lines, "```")
+  table.insert(lines, M.generate_compact())
+  table.insert(lines, "```")
+  table.insert(lines, "")
+
+  -- DRY hints for code reuse
+  table.insert(lines, M.get_dry_hints())
   table.insert(lines, "")
   table.insert(lines, "*Updated: " .. os.date("%Y-%m-%d %H:%M") .. "*")
 

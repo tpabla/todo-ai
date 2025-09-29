@@ -84,10 +84,21 @@ function M.enrich_with_project_context(context)
     if bufnr ~= current_bufnr and vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buflisted then
       local name = vim.api.nvim_buf_get_name(bufnr)
       if name ~= '' and not name:match('^Todo%-AI Chat') then
+        -- Get buffer content (limit size to avoid huge context)
+        local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+        local content = table.concat(lines, '\n')
+
+        -- Limit content size (e.g., first 2000 chars)
+        if #content > 2000 then
+          content = content:sub(1, 2000) .. '\n... [content truncated]'
+        end
+
         table.insert(other_buffers, {
           path = name,
           filename = vim.fn.fnamemodify(name, ':t'),
-          filetype = vim.bo[bufnr].filetype
+          filetype = vim.bo[bufnr].filetype,
+          bufnr = bufnr,  -- Store bufnr for LSP collection
+          content = content
         })
       end
     end
@@ -98,6 +109,40 @@ function M.enrich_with_project_context(context)
   local ok, context_module = pcall(require, 'todo-ai.context_compact')
   if ok then
     context.project_context = context_module.get_for_prompt()
+  end
+
+  -- Add LSP context
+  local config = require('todo-ai.config')
+  local lsp_config = config.get('lsp_context')
+
+  if lsp_config and lsp_config.enabled ~= false then
+    local lsp_ok, lsp_context = pcall(require, 'todo-ai.lsp_context')
+    if lsp_ok then
+      -- Get focused LSP context for the current buffer
+      local line = context.line_number or (context.is_visual and context.start_line) or nil
+      local lsp_data = lsp_context.get_focused_context(context.bufnr, line, 0, lsp_config)
+      if lsp_data then
+        context.lsp = lsp_data
+      end
+
+      -- Get LSP context for all other open buffers if enabled
+      if lsp_config.include_all_buffers ~= false then
+        local all_buffers_lsp = {}
+        for _, buf_info in ipairs(context.other_buffers or {}) do
+          if buf_info.bufnr then
+            -- Get simplified LSP data for other buffers (mainly diagnostics)
+            local buf_lsp = lsp_context.get_buffer_diagnostics_summary(buf_info.bufnr)
+            if buf_lsp then
+              all_buffers_lsp[buf_info.filename] = buf_lsp
+            end
+          end
+        end
+
+        if vim.tbl_count(all_buffers_lsp) > 0 then
+          context.all_buffers_lsp = all_buffers_lsp
+        end
+      end
+    end
   end
 
   return context
@@ -173,10 +218,26 @@ function M.send_to_provider(context, callback)
     }, callback)
   elseif provider.chat_async then
     -- For chat-based providers, send as messages
-    local messages = {
-      {role = 'system', content = prompts.system},
-      {role = 'user', content = prompts.user}
-    }
+    local messages = {}
+
+    -- Add system prompt
+    table.insert(messages, {role = 'system', content = prompts.system})
+
+    -- Add conversation history if provided
+    if context.conversation_history then
+      for _, msg in ipairs(context.conversation_history) do
+        -- Only include user and assistant messages (not system or thinking)
+        if msg.role == 'user' or msg.role == 'assistant' then
+          table.insert(messages, {
+            role = msg.role,
+            content = msg.content
+          })
+        end
+      end
+    end
+
+    -- Add current user message
+    table.insert(messages, {role = 'user', content = prompts.user})
 
     provider.chat_async(messages, {
       model = config.get('model'),
@@ -190,7 +251,7 @@ end
 -- Handle provider response uniformly
 function M.handle_response(response, error, context)
   local chat = require('todo-ai.chat')
-  local diff_native = require('todo-ai.diff_native')
+  local diff = require('todo-ai.diff')
   local init = require('todo-ai.init')
 
   if error then
@@ -198,10 +259,63 @@ function M.handle_response(response, error, context)
     return
   end
 
+  -- Debug logging for response
+  local logger = require('todo-ai.logger')
+  local validator = require('todo-ai.schema_validator')
+
+  logger.debug('Raw LLM response type: ' .. type(response))
+
   -- Parse response if it's a string
   if type(response) == 'string' then
+    logger.debug('Raw response string: ' .. vim.inspect(response))
     response = parser.parse(response, context.instruction)
+    logger.debug('Parsed response: ' .. vim.inspect(response))
+
+    -- Check for parse errors
+    if response.parse_error then
+      logger.error('Parse error: ' .. response.parse_error)
+      chat.add_message('ai', string.format([[
+## ❌ JSON Parse Error
+
+The LLM returned invalid JSON that couldn't be parsed.
+
+**Error:** %s
+
+**Raw response logged to:** `/tmp/todo-ai.log`
+
+This usually means the LLM included:
+- Extra text before/after the JSON
+- Invalid JSON syntax
+- Markdown code blocks around the JSON
+
+Please try your request again.
+]], response.parse_error))
+      return
+    end
+  else
+    logger.debug('Response object: ' .. vim.inspect(response))
   end
+
+  -- STRICT VALIDATION - Fail loudly if schema doesn't match
+  local valid, validation_errors = validator.validate_response(response)
+  if not valid then
+    logger.error('Schema validation failed: ' .. vim.inspect(validation_errors))
+
+    -- Show detailed error to user
+    local error_message = validator.format_validation_errors(validation_errors)
+    chat.add_message('ai', error_message)
+
+    -- Log to file for debugging
+    logger.error('Full invalid response: ' .. vim.inspect(response))
+
+    -- STOP PROCESSING - Don't try to guess or recover
+    return
+  end
+
+  -- Log validated fields
+  logger.debug('✓ Schema validation passed')
+  logger.debug('Response mode: ' .. tostring(response.mode))
+  logger.debug('Response filename: ' .. tostring(response.filename))
 
   -- Handle based on response mode
   if response.mode == "chat" then
@@ -216,34 +330,49 @@ function M.handle_response(response, error, context)
     end
 
     -- Determine target buffer
-    local target_buf = context.bufnr
+    local target_buf = nil
 
-    -- If response specifies a filename, try to find that buffer
     if response.filename then
-      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-        if vim.api.nvim_buf_is_valid(buf) then
-          local buf_name = vim.api.nvim_buf_get_name(buf)
-          -- Make sure it's not the chat buffer
-          if not buf_name:match('Todo%-AI Chat') and buf_name:match(response.filename .. "$") then
-            target_buf = buf
-            break
+      -- Build full path
+      local full_path = response.filename:match('^/') and response.filename or
+                       (vim.fn.getcwd() .. '/' .. response.filename)
+
+      -- Get or create buffer
+      target_buf = vim.fn.bufnr(full_path)
+      if target_buf == -1 then
+        target_buf = vim.api.nvim_create_buf(true, false)
+        vim.api.nvim_buf_set_name(target_buf, full_path)
+        if vim.fn.filereadable(full_path) == 1 then
+          vim.fn.bufload(target_buf)
+        else
+          -- Set filetype based on extension for new files
+          local ext = full_path:match("%.([^.]+)$")
+          if ext then
+            vim.bo[target_buf].filetype = ext
           end
         end
       end
+
+      -- Mark new files
+      if vim.fn.filereadable(full_path) == 0 or
+         (response.changes and #response.changes > 0 and response.changes[1].search == "") then
+        response.new_file = true
+      end
+    else
+      target_buf = context.bufnr
     end
 
-    -- CRITICAL: Never apply changes to the chat buffer
-    local target_buf_name = vim.api.nvim_buf_get_name(target_buf or 0)
-    if target_buf_name:match('Todo%-AI Chat') then
-      chat.add_message('ai', "❌ **Error**: Cannot modify the chat buffer. Please open a code file and try again.")
+    -- Fail if no buffer or if it's the chat buffer
+    if not target_buf or M.is_chat_buffer(target_buf) then
+      chat.add_message('ai', '❌ **Error**: No valid target buffer. Specify a filename or open a code file.')
       return
     end
 
     -- Show diff in the target buffer
-    diff_native.show_response(target_buf, response)
+    diff.show(target_buf, response)
 
     -- Add navigation help
-    chat.add_message('system', '✨ Changes ready for review! Use `]d` / `[d` to navigate, `<leader>ta` to accept, `<leader>tr` to reject.')
+    chat.add_message('system', '✨ Changes ready! Use `<leader>ta` to accept change at cursor, `<leader>tr` to reject. Navigate with `]]` and `[[`.')
 
   else
     -- Fallback for unrecognized response format
@@ -342,6 +471,11 @@ function M.process(opts)
 
   local context = M.create_context(context_opts)
 
+  -- Add conversation history if provided
+  if opts.conversation_history then
+    context.conversation_history = opts.conversation_history
+  end
+
   -- Show thinking animation
   chat.show_thinking(config.get('model'))
 
@@ -352,47 +486,28 @@ function M.process(opts)
   end)
 end
 
--- Helper function to find appropriate target buffer for chat mode
+-- Helper function to check if buffer is chat - used everywhere
+function M.is_chat_buffer(bufnr)
+  if not bufnr then return true end
+  return vim.api.nvim_buf_get_name(bufnr):match('Todo%-AI Chat') ~= nil
+end
+
+-- Find target buffer - fail if none found
 function M.find_target_buffer()
   local init = require('todo-ai.init')
 
-  -- Try visual target buffer first
-  if init.state.visual_target_buffer and vim.api.nvim_buf_is_valid(init.state.visual_target_buffer) then
+  -- Check visual target buffer
+  if init.state.visual_target_buffer and not M.is_chat_buffer(init.state.visual_target_buffer) then
     return init.state.visual_target_buffer
   end
 
-  -- Find the most recent non-chat buffer
-  local current_buf = vim.api.nvim_get_current_buf()
-  local buf_name = vim.api.nvim_buf_get_name(current_buf)
-
-  -- If not in chat buffer, use current
-  if not buf_name:match('Todo%-AI Chat') then
-    return current_buf
+  -- Check current buffer
+  local current = vim.api.nvim_get_current_buf()
+  if not M.is_chat_buffer(current) then
+    return current
   end
 
-  -- Find the last buffer that wasn't the chat
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local win_buf = vim.api.nvim_win_get_buf(win)
-    local win_buf_name = vim.api.nvim_buf_get_name(win_buf)
-    if not win_buf_name:match('Todo%-AI Chat') and win_buf_name ~= '' then
-      return win_buf
-    end
-  end
-
-  -- Try the alternate buffer
-  local alt_buf = vim.fn.bufnr('#')
-  if alt_buf > 0 and vim.api.nvim_buf_is_valid(alt_buf) then
-    local alt_buf_name = vim.api.nvim_buf_get_name(alt_buf)
-    if not alt_buf_name:match('Todo%-AI Chat') then
-      return alt_buf
-    end
-  end
-
-  -- Last resort: use the last known code buffer
-  if init.state.last_code_buffer and vim.api.nvim_buf_is_valid(init.state.last_code_buffer) then
-    return init.state.last_code_buffer
-  end
-
+  -- No valid buffer found - fail
   return nil
 end
 

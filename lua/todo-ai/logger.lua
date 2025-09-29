@@ -1,7 +1,8 @@
 ---@class Logger
 local M = {}
 
-local LOG_FILE = '/tmp/todo-ai.log'
+M.LOG_FILE = '/tmp/todo-ai.log'
+local LOG_FILE = M.LOG_FILE  -- Keep local reference for compatibility
 local LOG_LEVELS = {
   DEBUG = 1,
   INFO = 2,
