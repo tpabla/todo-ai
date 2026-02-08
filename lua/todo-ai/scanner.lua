@@ -22,10 +22,25 @@ M.patterns = {
 
 function M.find_todos(bufnr)
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+  -- Try Rust backend first
+  local ok, bridge = pcall(require, 'todo-ai.bridge')
+  if ok and bridge.is_running() then
+    local comment_string = vim.bo[bufnr].commentstring
+    local result, err = bridge.call_sync('scan_todos', {
+      lines = lines,
+      comment_string = comment_string,
+    })
+    if result and not err then
+      return result
+    end
+  end
+
+  -- Lua fallback
   local todos = {}
 
   for line_num, line in ipairs(lines) do
-    local todo = M.parse_line(line, line_num, lines)  -- Pass lines for multi-line support
+    local todo = M.parse_line(line, line_num, lines)
     if todo then
       table.insert(todos, todo)
     end

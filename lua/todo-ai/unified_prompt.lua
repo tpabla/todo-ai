@@ -188,8 +188,66 @@ function M.build_complete_prompt(context)
   }
 end
 
+-- Try to send via Rust backend (handles HTTP, parsing, validation in one call)
+function M.send_via_rust(context, callback)
+  local ok, bridge = pcall(require, 'todo-ai.bridge')
+  if not ok or not bridge.is_running() then
+    return false
+  end
+
+  local config = require('todo-ai.config')
+  local provider_name = config.get('provider')
+
+  -- Build params for the Rust backend
+  local params = {
+    provider = provider_name,
+    instruction = context.instruction,
+    context = context,
+    model = config.get('model'),
+    temperature = config.get('temperature'),
+    max_tokens = config.get('max_tokens') or 4096,
+  }
+
+  -- Add API key based on provider
+  if provider_name == 'claude' then
+    params.api_key = vim.env.ANTHROPIC_API_KEY
+  elseif provider_name == 'openai' then
+    params.api_key = vim.env.OPENAI_API_KEY
+  end
+
+  -- Add conversation history if present
+  if context.conversation_history then
+    params.messages = context.conversation_history
+  end
+
+  bridge.call('send_to_provider', params, function(result, err)
+    if err then
+      callback(nil, err)
+      return
+    end
+
+    -- Rust returns { raw_content, parsed, validation }
+    if result.validation and not result.validation.valid then
+      -- Validation failed - return parsed response for error display
+      callback(result.parsed, nil)
+    else
+      callback(result.parsed, nil)
+    end
+  end)
+
+  return true
+end
+
 -- Send prompt to provider and handle response
 function M.send_to_provider(context, callback)
+  -- Try Rust backend first (handles HTTP + parsing + validation)
+  if M.send_via_rust(context, callback) then
+    logger.info('unified_prompt', 'Using Rust backend for provider request')
+    return
+  end
+
+  -- Fall back to Lua implementation
+  logger.info('unified_prompt', 'Using Lua fallback for provider request')
   local providers = require('todo-ai.providers')
   local config = require('todo-ai.config')
 

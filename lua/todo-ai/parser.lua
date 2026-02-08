@@ -15,6 +15,21 @@ end
 function M.parse(response, hint)
   logger.debug('Parsing response', { hint = hint, response_length = #response })
 
+  -- Try Rust backend first
+  local bridge_ok, bridge = pcall(require, 'todo-ai.bridge')
+  if bridge_ok and bridge.is_running() then
+    local rust_result, err = bridge.call_sync('parse_response', {
+      response = response,
+      hint = hint,
+    })
+    if rust_result and not err then
+      logger.debug('parser: used Rust backend')
+      return rust_result
+    end
+  end
+
+  -- Lua fallback
+  logger.debug('parser: using Lua fallback')
   local result = {
     raw_response = response,
     format_detected = 'unknown',

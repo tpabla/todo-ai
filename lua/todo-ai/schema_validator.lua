@@ -5,6 +5,20 @@ local logger = require('todo-ai.logger')
 
 -- Validate response against expected schema
 function M.validate_response(response)
+  -- Try Rust backend first
+  local bridge_ok, bridge = pcall(require, 'todo-ai.bridge')
+  if bridge_ok and bridge.is_running() and response then
+    local rust_result, err = bridge.call_sync('validate_response', {response = response})
+    if rust_result and not err then
+      if rust_result.valid then
+        return true, nil
+      else
+        return false, rust_result.errors or {}
+      end
+    end
+  end
+
+  -- Lua fallback
   local errors = {}
 
   -- Check if response exists

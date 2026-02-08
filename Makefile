@@ -1,9 +1,32 @@
-.PHONY: test test-watch test-single clean-nvim check-nvim
+.PHONY: test test-lua test-rust test-watch test-single clean-nvim check-nvim build build-rust build-rust-release clean-rust clean
 
-# Run all tests with cleanup
-test:
-	@echo "Running tests with cleanup..."
+# Build Rust backend (debug)
+build-rust:
+	@echo "Building Rust backend (debug)..."
+	@cd rust && cargo build
+	@echo "Built: rust/target/debug/todo-ai-core"
+
+# Build Rust backend (release - optimized)
+build-rust-release:
+	@echo "Building Rust backend (release)..."
+	@cd rust && cargo build --release
+	@echo "Built: rust/target/release/todo-ai-core"
+
+# Build everything (release)
+build: build-rust-release
+
+# Run Rust tests
+test-rust:
+	@echo "Running Rust tests..."
+	@cd rust && cargo test
+
+# Run Lua tests
+test-lua:
+	@echo "Running Lua tests with cleanup..."
 	@lua tests/run_tests.lua
+
+# Run all tests (Rust + Lua)
+test: test-rust test-lua
 
 # Watch for changes and run tests
 test-watch:
@@ -13,7 +36,7 @@ test-watch:
 		make test; \
 		echo ""; \
 		echo "Watching for changes (Ctrl+C to stop)..."; \
-		fswatch -1 -r lua/ tests/ 2>/dev/null; \
+		fswatch -1 -r lua/ tests/ rust/src/ 2>/dev/null; \
 	done
 
 # Run a single test file
@@ -34,3 +57,11 @@ clean-nvim:
 check-nvim:
 	@echo "Checking for nvim headless processes..."
 	@ps aux | grep -v grep | grep 'nvim --headless' || echo "No nvim headless processes running"
+
+# Clean Rust build artifacts
+clean-rust:
+	@echo "Cleaning Rust build..."
+	@cd rust && cargo clean
+
+# Clean everything
+clean: clean-rust clean-nvim

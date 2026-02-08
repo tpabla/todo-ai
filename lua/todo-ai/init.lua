@@ -19,6 +19,12 @@ function M.setup(opts)
   local logger = require('todo-ai.logger')
   logger.init(config.config)
 
+  -- Start Rust backend (non-blocking, falls back gracefully)
+  local bridge_ok, bridge = pcall(require, 'todo-ai.bridge')
+  if bridge_ok then
+    bridge.start()
+  end
+
   -- Load providers after config is set up
   providers = require('todo-ai.providers')
   providers.setup()
