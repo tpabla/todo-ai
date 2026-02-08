@@ -34,6 +34,9 @@ coverage.xml
 *.cover
 .coverage
 
+# Rust build artifacts
+rust/target/
+
 # Temporary
 *.tmp
 *.bak
