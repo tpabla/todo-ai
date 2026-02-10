@@ -31,7 +31,7 @@ local function find_binary()
   return nil
 end
 
--- Start the Rust backend process
+-- Start the Rust backend process (required - errors if binary not found)
 function M.start()
   if M.state.job_id then
     return true
@@ -102,12 +102,7 @@ end
 -- Send a request to the backend
 function M.call(method, params, callback)
   if not M.state.job_id then
-    if not M.start() then
-      if callback then
-        callback(nil, 'Backend not available')
-      end
-      return
-    end
+    error('todo-ai: Rust backend is not running. Call bridge.start() first.')
   end
 
   M.state.request_id = M.state.request_id + 1

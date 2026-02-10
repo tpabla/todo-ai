@@ -1,97 +1,25 @@
 -- SEARCH/REPLACE transformation module
--- Delegates to Rust backend when available, falls back to Lua
+-- Delegates to Rust backend (required)
 local M = {}
 
--- Try to use the Rust backend for a synchronous call
-local function rust_call(method, params)
-  local ok, bridge = pcall(require, 'todo-ai.bridge')
-  if not ok or not bridge.is_running() then
-    return nil
-  end
-  local result, err = bridge.call_sync(method, params)
-  if err then return nil end
-  return result
-end
-
--- Apply a single SEARCH/REPLACE transformation (Lua fallback)
-function M.apply_single(content, search_text, replace_text)
-  local start_pos, end_pos = content:find(search_text, 1, true)
-
-  if not start_pos then
-    return nil, "Search text not found"
-  end
-
-  local result = content:sub(1, start_pos - 1) .. replace_text .. content:sub(end_pos + 1)
-  return result, nil
-end
+local bridge = require('todo-ai.bridge')
 
 -- Apply multiple SEARCH/REPLACE changes to lines
 function M.apply_changes(lines, changes)
-  local logger = require('todo-ai.logger')
-
-  -- Try Rust backend first
-  local rust_result = rust_call('apply_changes', {lines = lines, changes = changes})
-  if rust_result then
-    logger.debug('search_replace: used Rust backend')
-    return rust_result.lines, rust_result.applied_count, rust_result.errors
+  local result, err = bridge.call_sync('apply_changes', {lines = lines, changes = changes})
+  if err then
+    error('search_replace.apply_changes failed: ' .. err)
   end
-
-  -- Lua fallback
-  logger.debug('search_replace: using Lua fallback')
-  local content = table.concat(lines, '\n')
-  local applied_count = 0
-  local errors = {}
-
-  for i, change in ipairs(changes) do
-    if change.search and change.replace then
-      local result, err = M.apply_single(content, change.search, change.replace)
-      if result then
-        content = result
-        applied_count = applied_count + 1
-      else
-        table.insert(errors, 'Change ' .. i .. ': ' .. (err or 'unknown error'))
-      end
-    else
-      table.insert(errors, 'Change ' .. i .. ': missing search or replace field')
-    end
-  end
-
-  local new_lines = vim.split(content, '\n', { plain = true })
-
-  if #errors > 0 then
-    return new_lines, applied_count, table.concat(errors, "; ")
-  end
-
-  return new_lines, applied_count, nil
+  return result.lines, result.applied_count, result.errors
 end
 
 -- Calculate position information for a change
 function M.calculate_position(content, search_text)
-  -- Try Rust backend
-  local rust_result = rust_call('calculate_position', {content = content, search_text = search_text})
-  if rust_result then
-    return rust_result
+  local result, err = bridge.call_sync('calculate_position', {content = content, search_text = search_text})
+  if err then
+    error('search_replace.calculate_position failed: ' .. err)
   end
-
-  -- Lua fallback
-  local start_pos, end_pos = content:find(search_text, 1, true)
-
-  if not start_pos then
-    return nil
-  end
-
-  local before = content:sub(1, start_pos - 1)
-  local start_line = select(2, before:gsub('\n', '\n')) + 1
-  local search_lines = select(2, search_text:gsub('\n', '\n')) + 1
-  local end_line = start_line + search_lines - 1
-
-  return {
-    start_pos = start_pos,
-    end_pos = end_pos,
-    start_line = start_line,
-    end_line = end_line,
-    line_count = search_lines
-  }
+  return result
 end
 
 -- Build display with changes applied
@@ -123,45 +51,20 @@ end
 function M.track_change_regions(original_lines, changes, rejected_indices)
   rejected_indices = rejected_indices or {}
 
-  -- Try Rust backend
   local rejected_list = {}
   for idx, _ in pairs(rejected_indices) do
     table.insert(rejected_list, idx)
   end
-  local rust_result = rust_call('track_change_regions', {
+
+  local result, err = bridge.call_sync('track_change_regions', {
     lines = original_lines,
     changes = changes,
     rejected_indices = rejected_list,
   })
-  if rust_result then
-    return rust_result
+  if err then
+    error('search_replace.track_change_regions failed: ' .. err)
   end
-
-  -- Lua fallback
-  local regions = {}
-  local content = table.concat(original_lines, '\n')
-
-  for i, change in ipairs(changes) do
-    if change and change.search and change.replace and not rejected_indices[i] then
-      local pos_info = M.calculate_position(content, change.search)
-
-      if pos_info then
-        local replace_lines = vim.split(change.replace, '\n', { plain = true })
-
-        table.insert(regions, {
-          change_index = i,
-          original_start = pos_info.start_line,
-          original_end = pos_info.end_line,
-          new_line_count = #replace_lines,
-          search_text = change.search,
-          replace_text = change.replace,
-          description = change.description
-        })
-      end
-    end
-  end
-
-  return regions
+  return result
 end
 
 -- Validate a change structure

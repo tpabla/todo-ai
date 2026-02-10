@@ -1,120 +1,44 @@
+-- TODO: @ai scanner module
+-- Delegates to Rust backend (required)
 local M = {}
 
--- Pattern to match TODO: @ai comments
--- Supports multiple comment styles
-M.patterns = {
-  -- Single-line comments
-  '%-%-+%s*TODO:%s*@ai%s+(.+)',           -- Lua: -- TODO: @ai
-  '//%s*TODO:%s*@ai%s+(.+)',             -- C-style: // TODO: @ai
-  '#%s*TODO:%s*@ai%s+(.+)',              -- Python/Shell: # TODO: @ai
-  '"%s*TODO:%s*@ai%s+(.+)',              -- Vim: " TODO: @ai
-  ';%s*TODO:%s*@ai%s+(.+)',              -- Lisp/Assembly: ; TODO: @ai
-
-  -- Multi-line comment start
-  '/%*%s*TODO:%s*@ai%s+(.+)',            -- C-style: /* TODO: @ai
-  '<!%-%-% %s*TODO:%s*@ai%s+(.+)',       -- HTML: <!-- TODO: @ai
-  '{%-%s*TODO:%s*@ai%s+(.+)',            -- Jinja: {# TODO: @ai
-
-  -- Language-specific
-  '%%%s*TODO:%s*@ai%s+(.+)',             -- LaTeX: % TODO: @ai
-  '%.%.%.%s*TODO:%s*@ai%s+(.+)',         -- Haskell: -- TODO: @ai
-}
+local bridge = require('todo-ai.bridge')
 
 function M.find_todos(bufnr)
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local comment_string = vim.bo[bufnr].commentstring
 
-  -- Try Rust backend first
-  local ok, bridge = pcall(require, 'todo-ai.bridge')
-  if ok and bridge.is_running() then
-    local comment_string = vim.bo[bufnr].commentstring
-    local result, err = bridge.call_sync('scan_todos', {
-      lines = lines,
-      comment_string = comment_string,
-    })
-    if result and not err then
-      return result
-    end
+  local result, err = bridge.call_sync('scan_todos', {
+    lines = lines,
+    comment_string = comment_string,
+  })
+  if err then
+    error('scanner.find_todos failed: ' .. err)
   end
-
-  -- Lua fallback
-  local todos = {}
-
-  for line_num, line in ipairs(lines) do
-    local todo = M.parse_line(line, line_num, lines)
-    if todo then
-      table.insert(todos, todo)
-    end
-  end
-
-  return todos
-end
-
-function M.parse_line(line, line_num, all_lines)
-  for _, pattern in ipairs(M.patterns) do
-    local instruction = line:match(pattern)
-    if instruction then
-      -- Check for multi-line TODO
-      local full_instruction = instruction:gsub('^%s+', ''):gsub('%s+$', '')  -- Trim
-
-      -- If all_lines is provided, look for continuation lines
-      if all_lines then
-        full_instruction = M.extract_multiline_todo(all_lines, line_num, full_instruction)
-      end
-
-      return {
-        line = line_num,
-        instruction = full_instruction,
-        full_line = line,
-        pattern = pattern
-      }
-    end
-  end
-  return nil
-end
-
-function M.extract_multiline_todo(lines, start_line, initial_instruction)
-  local full_instruction = initial_instruction
-  local indent = lines[start_line]:match('^(%s*)')
-
-  -- Detect comment string for the buffer
-  local comment_string = vim.bo.commentstring or '// %s'
-  local comment_start = comment_string:match('^(.-)%s*%%s') or '//'
-  comment_start = comment_start:gsub('%s+$', '')  -- Trim trailing spaces
-
-  -- Look for continuation lines
-  local i = start_line + 1
-  while i <= #lines do
-    local line = lines[i]
-    local line_indent = line:match('^(%s*)')
-
-    -- Check if this is a continuation:
-    -- Same indentation, starts with comment marker, doesn't have TODO or @ai
-    if line_indent == indent and line:match('^%s*' .. vim.pesc(comment_start)) then
-      if not line:match('TODO') and not line:match('@ai') then
-        -- Extract the comment content (remove indent and comment marker)
-        local content = line:gsub('^%s*' .. vim.pesc(comment_start) .. '%s*', '')
-        if content and content ~= '' then
-          full_instruction = full_instruction .. ' ' .. content
-        end
-        i = i + 1
-      else
-        break  -- Found another TODO, stop here
-      end
-    else
-      break  -- Different indentation or not a comment, stop here
-    end
-  end
-
-  return full_instruction:gsub('%s+', ' ')  -- Normalize whitespace
+  return result
 end
 
 function M.find_todo_at_cursor()
   local bufnr = vim.api.nvim_get_current_buf()
   local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local line = lines[cursor_line]
+  local comment_string = vim.bo[bufnr].commentstring
 
-  return M.parse_line(line, cursor_line, lines)
+  local result, err = bridge.call_sync('scan_todos', {
+    lines = lines,
+    comment_string = comment_string,
+  })
+  if err then
+    error('scanner.find_todo_at_cursor failed: ' .. err)
+  end
+
+  -- Find the TODO at the cursor line
+  for _, todo in ipairs(result) do
+    if todo.line == cursor_line then
+      return todo
+    end
+  end
+  return nil
 end
 
 -- Scan entire project for TODOs
@@ -127,13 +51,11 @@ function M.scan_project()
 
   local handle = io.popen(cmd)
   if not handle then
-    vim.notify("Failed to scan project files", vim.log.levels.ERROR)
-    return todos_by_file
+    error("Failed to scan project files")
   end
 
   local files = {}
   for file in handle:lines() do
-    -- Skip common directories we don't want to scan
     if not file:match("^%.git/") and
        not file:match("^node_modules/") and
        not file:match("^%.venv/") and
@@ -147,7 +69,7 @@ function M.scan_project()
   end
   handle:close()
 
-  -- Scan each file for TODOs
+  -- Scan each file for TODOs via Rust backend
   for _, file_path in ipairs(files) do
     local file = io.open(file_path, "r")
     if file then
@@ -157,19 +79,16 @@ function M.scan_project()
       end
       file:close()
 
-      -- Parse each line for TODOs
-      local file_todos = {}
-      for line_num, line in ipairs(lines) do
-        local todo = M.parse_line(line, line_num, lines)
-        if todo then
+      local result, err = bridge.call_sync('scan_todos', {
+        lines = lines,
+        comment_string = '// %s',
+      })
+      if result and not err and #result > 0 then
+        for _, todo in ipairs(result) do
           todo.file = file_path
-          table.insert(file_todos, todo)
-          total_todos = total_todos + 1
         end
-      end
-
-      if #file_todos > 0 then
-        todos_by_file[file_path] = file_todos
+        todos_by_file[file_path] = result
+        total_todos = total_todos + #result
       end
     end
   end
@@ -185,7 +104,7 @@ function M.format_project_todos(todos_by_file)
   table.insert(formatted, "=== Project-wide TODOs ===\n")
 
   for file_path, todos in pairs(todos_by_file) do
-    table.insert(formatted, string.format("\n📄 %s:", file_path))
+    table.insert(formatted, string.format("\n%s:", file_path))
     for _, todo in ipairs(todos) do
       table.insert(formatted, string.format("  Line %d: %s", todo.line, todo.instruction))
     end

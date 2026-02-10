@@ -188,13 +188,9 @@ function M.build_complete_prompt(context)
   }
 end
 
--- Try to send via Rust backend (handles HTTP, parsing, validation in one call)
-function M.send_via_rust(context, callback)
-  local ok, bridge = pcall(require, 'todo-ai.bridge')
-  if not ok or not bridge.is_running() then
-    return false
-  end
-
+-- Send prompt to provider via Rust backend (handles HTTP, parsing, validation)
+function M.send_to_provider(context, callback)
+  local bridge = require('todo-ai.bridge')
   local config = require('todo-ai.config')
   local provider_name = config.get('provider')
 
@@ -228,82 +224,11 @@ function M.send_via_rust(context, callback)
 
     -- Rust returns { raw_content, parsed, validation }
     if result.validation and not result.validation.valid then
-      -- Validation failed - return parsed response for error display
       callback(result.parsed, nil)
     else
       callback(result.parsed, nil)
     end
   end)
-
-  return true
-end
-
--- Send prompt to provider and handle response
-function M.send_to_provider(context, callback)
-  -- Try Rust backend first (handles HTTP + parsing + validation)
-  if M.send_via_rust(context, callback) then
-    logger.info('unified_prompt', 'Using Rust backend for provider request')
-    return
-  end
-
-  -- Fall back to Lua implementation
-  logger.info('unified_prompt', 'Using Lua fallback for provider request')
-  local providers = require('todo-ai.providers')
-  local config = require('todo-ai.config')
-
-  -- Ensure providers are initialized
-  if not providers._initialized then
-    providers.setup()
-  end
-
-  local provider_name = config.get('provider')
-  local provider = providers.get(provider_name)
-
-  if not provider then
-    callback(nil, 'Provider ' .. provider_name .. ' not found')
-    return
-  end
-
-  -- Build the prompt
-  local prompts = M.build_complete_prompt(context)
-
-  -- Use complete_async for TODO processing style (includes system prompt)
-  if provider.complete_async then
-    -- Send as instruction + context (provider will add system prompt)
-    provider.complete_async(context.instruction, vim.fn.json_encode(context), {
-      model = config.get('model'),
-      temperature = config.get('temperature')
-    }, callback)
-  elseif provider.chat_async then
-    -- For chat-based providers, send as messages
-    local messages = {}
-
-    -- Add system prompt
-    table.insert(messages, {role = 'system', content = prompts.system})
-
-    -- Add conversation history if provided
-    if context.conversation_history then
-      for _, msg in ipairs(context.conversation_history) do
-        -- Only include user and assistant messages (not system or thinking)
-        if msg.role == 'user' or msg.role == 'assistant' then
-          table.insert(messages, {
-            role = msg.role,
-            content = msg.content
-          })
-        end
-      end
-    end
-
-    -- Add current user message
-    table.insert(messages, {role = 'user', content = prompts.user})
-
-    provider.chat_async(messages, {
-      model = config.get('model'),
-      temperature = config.get('temperature')
-    }, callback)
-  else
-    callback(nil, 'Provider does not support async operations')
-  end
 end
 
 -- Handle provider response uniformly

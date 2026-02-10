@@ -19,10 +19,10 @@ function M.setup(opts)
   local logger = require('todo-ai.logger')
   logger.init(config.config)
 
-  -- Start Rust backend (non-blocking, falls back gracefully)
-  local bridge_ok, bridge = pcall(require, 'todo-ai.bridge')
-  if bridge_ok then
-    bridge.start()
+  -- Start Rust backend (required)
+  local bridge = require('todo-ai.bridge')
+  if not bridge.start() then
+    error('todo-ai: Failed to start Rust backend. Run `make build-rust` first.')
   end
 
   -- Load providers after config is set up
