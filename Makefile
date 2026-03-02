@@ -1,4 +1,4 @@
-.PHONY: test test-watch test-single clean-nvim check-nvim
+.PHONY: test test-watch test-single clean-nvim check-nvim build-rust test-rust
 
 # Run all tests with cleanup
 test:
@@ -34,3 +34,11 @@ clean-nvim:
 check-nvim:
 	@echo "Checking for nvim headless processes..."
 	@ps aux | grep -v grep | grep 'nvim --headless' || echo "No nvim headless processes running"
+
+# Build Rust backend
+build-rust:
+	cd rust && cargo build --release
+
+# Run Rust tests
+test-rust:
+	cd rust && cargo test

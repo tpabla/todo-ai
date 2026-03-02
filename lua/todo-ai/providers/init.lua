@@ -8,6 +8,7 @@ M.providers = {}
 -- Register all providers
 function M.setup()
   M.providers.claude = require('todo-ai.providers.claude')
+  M.providers['claude-cli'] = require('todo-ai.providers.claude_cli')
   M.providers.ollama = require('todo-ai.providers.ollama')
   M.providers.openai = require('todo-ai.providers.openai')
 end

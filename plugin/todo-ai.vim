@@ -5,8 +5,8 @@ if exists('g:loaded_todo_ai')
 endif
 let g:loaded_todo_ai = 1
 
-" Initialize Lua module
-lua require('todo-ai').setup()
+" Initialize Lua module (setup called by lazy.nvim config, not here)
+" lua require('todo-ai').setup()
 
 " Commands
 command! TodoAIScan lua require('todo-ai').scan_buffer()
