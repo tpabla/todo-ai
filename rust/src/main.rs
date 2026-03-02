@@ -1,3 +1,5 @@
+mod config;
+mod logger;
 mod rpc;
 
 use clap::Parser;
@@ -36,7 +38,7 @@ async fn main() {
 
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
-    let handler = Handler::new();
+    let mut handler = Handler::new();
 
     loop {
         let line = match lines.next_line().await {

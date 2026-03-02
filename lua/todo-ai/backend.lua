@@ -85,8 +85,8 @@ function M._connect(socket_path, config)
       end
     end)
 
-    -- Send initialize request
-    M.request("initialize", config or {}, function(result, rpc_err)
+    -- Send initialize request with full config
+    M.request("initialize", { config = config or {} }, function(result, rpc_err)
       if rpc_err then
         vim.notify("[todo-ai backend] initialize failed: " .. rpc_err.message, vim.log.levels.ERROR)
         return
