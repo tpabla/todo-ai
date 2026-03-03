@@ -1,5 +1,6 @@
 mod config;
 mod logger;
+mod parser;
 mod prompt;
 mod rpc;
 mod schema;

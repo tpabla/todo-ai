@@ -1,0 +1,83 @@
+# Branch: taran/split-into-rust
+
+Split todo-ai Neovim plugin from 100% Lua into Rust backend + Lua frontend.
+
+Rust handles: schemas, LLM communication, parsing, validation, context gathering.
+Lua handles: Neovim display (chat UI, diff, keymaps, buffer management).
+
+IPC: JSON-RPC 2.0 over Unix domain sockets.
+
+## Completed
+
+### Phase 0: Scaffolding
+- `rust/Cargo.toml` — binary crate with serde, serde_json, tokio, clap, chrono
+- `rust/src/main.rs` — tokio runtime, Unix socket listener, JSON-RPC dispatch loop
+- `rust/src/rpc.rs` — RpcRequest/RpcResponse/RpcError types, Handler with dispatch
+- `lua/todo-ai/backend.lua` — IPC client (start/stop sidecar, request/notify over socket)
+- Makefile targets: `build-rust`, `test-rust`
+
+### Phase 1: Config + Logger
+- `rust/src/config.rs` — Config struct with defaults, from_params() overlay merge, get/set, project config loading (4 tests)
+- `rust/src/logger.rs` — File logging to /tmp/todo-ai.log with levels, handles forwarded Lua logs (2 tests)
+- `rpc.rs` updated — Handler holds Config + Logger state, initialize/shutdown/get_config/set_config/log methods (5 tests)
+- `lua/todo-ai/logger.lua` — forwards to Rust backend when available
+
+### Phase 2: Schema + Prompt Config
+- `rust/src/schema.rs` — validate_response() for mode/filename/changes/explanation, format_validation_errors() (11 tests)
+- `rust/src/prompt.rs` — get_system_prompt(), build_user_prompt() with visual/todo/project_scan/chat builders (8 tests)
+- `rust/prompts/*.md` — 5 markdown files loaded via include_str!() at compile time:
+  - `system.md` — main system prompt (mode detection, JSON schema, file handling)
+  - `search_replace_rules.md` — numbered rules for search/replace
+  - `examples.md` — good/bad response examples
+  - `todo_instructions.md` — TODO-specific instructions
+  - `project_scan_instructions.md` — project scan instructions
+
+### Phase 3: Parser
+- `rust/src/parser.rs` — full port of parser.lua (~490 lines → ~420 lines Rust)
+- `ParseResult` struct with all fields (mode, filename, changes, code, thinking, etc.)
+- `detect_format()` — JSON, XML, markdown, plain code, mixed format detection
+- `extract_thinking_tags()` / `remove_thinking_tags()` / `format_thinking()` — 11 tag types
+- `parse_json_response()` — direct field assignment, incomplete/invalid JSON error handling
+- `parse_xml_structured()` — code/explanation extraction, all-tags section parsing
+- `parse_markdown_formatted()` — code blocks, JSON-in-markdown detection with warning
+- `parse_generic()` — fallback code/explanation separation
+- `looks_like_code()` — heuristic with 22 code patterns
+- Claude hint handling for format detection override
+- Added `regex = "1"` to Cargo.toml
+- 24 parser tests
+
+**Current test count: 54 passing**
+
+### Other changes
+- `lua/todo-ai/providers/claude_cli.lua` — new provider using `claude -p` CLI (OAuth subscription auth, stdin piping for large prompts)
+- `lua/todo-ai/providers/init.lua` — added claude-cli to registry
+- `lua/todo-ai/config.lua` — added claude-cli to valid_providers, model now required (no default)
+- `plugin/todo-ai.vim` — commented out premature setup() call (conflicts with lazy.nvim)
+
+## Next Up
+
+### Phase 4: Providers + HTTP (critical phase)
+- `rust/src/http.rs` — reqwest HTTP client
+- `rust/src/retry.rs` — exponential backoff with jitter
+- `rust/src/providers/` — claude.rs, openai.rs, ollama.rs, mod.rs (Provider trait)
+- Wire `complete` RPC: context → prompt → HTTP → stream → parse → validate → return
+- Refactor `unified_prompt.lua` to call backend.request("complete", ...)
+- Delete Lua: providers/*.lua, provider_base.lua, http_client.lua, retry_manager.lua, parser.lua, schema_validator.lua, prompt_builder.lua, prompt_config.lua
+
+### Phase 5: Context + Scanner
+- `rust/src/context.rs` — project context generation (replaces context_compact.lua)
+- `rust/src/scanner.rs` — TODO @ai regex matching
+- Wire scan_project_context and scan_todos RPCs
+
+### Phase 6: Chat Persistence
+- `rust/src/chat_store.rs` — save/load/list .todoai/chats/*.md
+- Wire save_chat, load_chat, list_chats RPCs
+
+## Architecture Notes
+
+- search_replace.lua stays in Lua (user request)
+- Binary found relative to plugin dir: `<plugin>/rust/target/release/todo-ai-backend`
+- Socket path: `/tmp/todo-ai-<pid>.sock`
+- Lua spawns via jobstart, connects via vim.loop.new_pipe()
+- All callbacks dispatched via vim.schedule()
+- Config split: backend config sent to Rust, UI config stays in Lua

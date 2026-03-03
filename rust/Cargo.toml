@@ -13,3 +13,4 @@ serde_json = "1"
 tokio = { version = "1", features = ["full", "net"] }
 clap = { version = "4", features = ["derive"] }
 chrono = "0.4"
+regex = "1"
