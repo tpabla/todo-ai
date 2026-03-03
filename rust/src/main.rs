@@ -1,6 +1,8 @@
 mod config;
 mod logger;
+mod prompt;
 mod rpc;
+mod schema;
 
 use clap::Parser;
 use rpc::{Handler, RpcRequest, RpcResponse};
