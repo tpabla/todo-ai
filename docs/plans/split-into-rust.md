@@ -79,12 +79,23 @@ IPC: JSON-RPC 2.0 over Unix domain sockets.
 - `lua/todo-ai/unified_prompt.lua` — removed `build_complete_prompt()`, removed Lua fallback path from `send_to_provider()` (error if backend not available), removed `parser`/`schema_validator` from `handle_response()` (Rust does parsing + validation)
 - `lua/todo-ai/dry_tagger.lua` — routes through `unified_prompt.send_to_provider()` instead of direct provider calls
 
-## Next Up
-
 ### Phase 5: Context + Scanner
-- `rust/src/context.rs` — project context generation (replaces context_compact.lua)
-- `rust/src/scanner.rs` — TODO @ai regex matching
-- Wire scan_project_context and scan_todos RPCs
+- `rust/src/context.rs` — project context generation (port of context_compact.lua)
+  - `generate_compact()` — tech stack, language file counts, dirs, configs, test frameworks, package managers, recent changes, dependency summary
+  - `encode_for_llm()` — strip markdown, truncate to 2000 chars
+  - 5 tests
+- `rust/src/scanner.rs` — TODO @ai regex matching (port of scanner.lua)
+  - `parse_line()` — 9 comment style patterns (Lua, C, Python, HTML, Vim, Lisp, LaTeX, Jinja, C block)
+  - `extract_multiline_todo()` — continuation line support
+  - `find_todos()` — scan lines for all matches
+  - `scan_project()` — walk project files via git ls-files / find
+  - `format_project_todos()` — format for LLM context
+  - 12 tests (including real project scan test)
+- `rpc.rs` — added `scan_project_context` and `scan_todos` RPC methods
+
+**Current test count: 81 passing**
+
+## Next Up
 
 ### Phase 6: Chat Persistence
 - `rust/src/chat_store.rs` — save/load/list .todoai/chats/*.md

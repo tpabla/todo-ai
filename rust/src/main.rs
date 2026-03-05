@@ -1,4 +1,5 @@
 mod config;
+mod context;
 mod http;
 mod logger;
 mod parser;
@@ -6,6 +7,7 @@ mod prompt;
 mod providers;
 mod retry;
 mod rpc;
+mod scanner;
 mod schema;
 
 use clap::Parser;

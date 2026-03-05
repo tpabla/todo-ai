@@ -2,10 +2,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::config::Config;
+use crate::context;
 use crate::logger::{LogLevel, Logger};
 use crate::parser;
 use crate::prompt::{self, PromptContext};
 use crate::providers::{self, ChatMessage};
+use crate::scanner;
 use crate::schema;
 
 #[derive(Debug, Deserialize)]
@@ -91,6 +93,8 @@ impl Handler {
             "set_config" => self.handle_set_config(request),
             "log" => self.handle_log(request),
             "complete" => self.handle_complete(request).await,
+            "scan_project_context" => self.handle_scan_project_context(request),
+            "scan_todos" => self.handle_scan_todos(request),
             _ => RpcResponse::error(
                 request.id,
                 -32601,
@@ -180,6 +184,86 @@ impl Handler {
 
         // Log is a notification, but return success if it has an id
         RpcResponse::success(request.id, serde_json::json!({"ok": true}))
+    }
+
+    /// Handle `scan_project_context` RPC: generate compact project context.
+    fn handle_scan_project_context(&self, request: RpcRequest) -> RpcResponse {
+        let project_root = request
+            .params
+            .get("project_root")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
+
+        self.logger
+            .info("context", &format!("Scanning project context: {project_root}"));
+
+        let ctx = context::generate_compact(project_root);
+        let compact = ctx.to_string();
+        let encoded = context::encode_for_llm(&compact);
+
+        RpcResponse::success(
+            request.id,
+            serde_json::json!({
+                "compact": compact,
+                "encoded": encoded,
+            }),
+        )
+    }
+
+    /// Handle `scan_todos` RPC: find TODO @ai matches in provided content or project.
+    fn handle_scan_todos(&self, request: RpcRequest) -> RpcResponse {
+        // If "lines" is provided, scan those lines directly
+        if let Some(lines_val) = request.params.get("lines") {
+            if let Some(lines_arr) = lines_val.as_array() {
+                let lines: Vec<&str> = lines_arr
+                    .iter()
+                    .filter_map(|v| v.as_str())
+                    .collect();
+
+                let todos = scanner::find_todos(&lines);
+                let json_todos: Vec<serde_json::Value> = todos
+                    .iter()
+                    .map(|t| serde_json::to_value(t).unwrap_or_default())
+                    .collect();
+
+                return RpcResponse::success(request.id, serde_json::json!({ "todos": json_todos }));
+            }
+        }
+
+        // Otherwise scan the project
+        let project_root = request
+            .params
+            .get("project_root")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
+
+        self.logger
+            .info("scanner", &format!("Scanning project for TODOs: {project_root}"));
+
+        let todos_by_file = scanner::scan_project(project_root);
+        let formatted = scanner::format_project_todos(&todos_by_file);
+
+        // Build result with per-file TODOs
+        let mut files_json = serde_json::Map::new();
+        for (file, todos) in &todos_by_file {
+            let json_todos: Vec<serde_json::Value> = todos
+                .iter()
+                .map(|t| serde_json::to_value(t).unwrap_or_default())
+                .collect();
+            files_json.insert(file.clone(), serde_json::Value::Array(json_todos));
+        }
+
+        let total: usize = todos_by_file.values().map(|v| v.len()).sum();
+
+        RpcResponse::success(
+            request.id,
+            serde_json::json!({
+                "todos_by_file": files_json,
+                "formatted": formatted,
+                "total_count": total,
+                "file_count": todos_by_file.len(),
+            }),
+        )
     }
 
     /// Handle the `complete` RPC: build prompt → call provider → parse → validate → return.
