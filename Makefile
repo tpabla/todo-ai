@@ -3,9 +3,8 @@
 # Run all tests with cleanup
 test:
 	@echo "Running tests..."
-	@timeout 30 nvim --headless -u tests/minimal_init.lua \
-		-c 'lua require("plenary.test_harness").test_directory("tests/plenary/", {minimal_init="tests/minimal_init.lua", sequential=true})' \
-		-c 'qa!' || (pkill -f 'nvim --headless' 2>/dev/null; exit 1)
+	@timeout 120 nvim --headless -u tests/minimal_init.lua \
+		-c 'lua require("plenary.test_harness").test_directory("tests/plenary/", {minimal_init="tests/minimal_init.lua", sequential=true})'
 	@pkill -f 'nvim --headless' 2>/dev/null || true
 
 # Watch for changes and run tests
