@@ -190,6 +190,25 @@ end
 
 -- Send prompt to provider and handle response
 function M.send_to_provider(context, callback)
+  local backend = require('todo-ai.backend')
+
+  -- Use Rust backend if available
+  if backend.is_available() then
+    logger.info('unified_prompt', 'Sending to Rust backend via complete RPC')
+
+    -- Send context directly — Rust builds prompts, calls provider, parses, validates
+    backend.request("complete", context, function(result, rpc_err)
+      if rpc_err then
+        local err_msg = type(rpc_err) == 'table' and rpc_err.message or tostring(rpc_err)
+        callback(nil, err_msg)
+        return
+      end
+      callback(result, nil)
+    end)
+    return
+  end
+
+  -- Fallback to Lua providers if backend not running
   local providers = require('todo-ai.providers')
   local config = require('todo-ai.config')
 

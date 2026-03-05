@@ -28,6 +28,14 @@ function M.setup(opts)
   deps.check_dependencies()
 
 
+  -- Start Rust backend if binary exists
+  local backend = require('todo-ai.backend')
+  local plugin_dir = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":h:h:h")
+  local binary = plugin_dir .. "/rust/target/release/todo-ai-backend"
+  if vim.fn.executable(binary) == 1 then
+    pcall(backend.start, config.config)
+  end
+
   -- Setup optional integrations
   local integrations = require('todo-ai.integrations')
   integrations.setup_all()

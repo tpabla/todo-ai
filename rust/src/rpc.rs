@@ -3,6 +3,10 @@ use serde_json::Value;
 
 use crate::config::Config;
 use crate::logger::{LogLevel, Logger};
+use crate::parser;
+use crate::prompt::{self, PromptContext};
+use crate::providers::{self, ChatMessage};
+use crate::schema;
 
 #[derive(Debug, Deserialize)]
 pub struct RpcRequest {
@@ -79,13 +83,14 @@ impl Handler {
         }
     }
 
-    pub fn dispatch(&mut self, request: RpcRequest) -> RpcResponse {
+    pub async fn dispatch(&mut self, request: RpcRequest) -> RpcResponse {
         match request.method.as_str() {
             "initialize" => self.handle_initialize(request),
             "shutdown" => self.handle_shutdown(request),
             "get_config" => self.handle_get_config(request),
             "set_config" => self.handle_set_config(request),
             "log" => self.handle_log(request),
+            "complete" => self.handle_complete(request).await,
             _ => RpcResponse::error(
                 request.id,
                 -32601,
@@ -176,14 +181,134 @@ impl Handler {
         // Log is a notification, but return success if it has an id
         RpcResponse::success(request.id, serde_json::json!({"ok": true}))
     }
+
+    /// Handle the `complete` RPC: build prompt → call provider → parse → validate → return.
+    async fn handle_complete(&self, request: RpcRequest) -> RpcResponse {
+        self.logger.info("complete", "=== COMPLETE REQUEST START ===");
+
+        // Parse context from params
+        let context: PromptContext = match serde_json::from_value(request.params.clone()) {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                self.logger.error("complete", &format!("Failed to parse context: {e}"));
+                return RpcResponse::error(request.id, -32602, format!("Invalid context: {e}"));
+            }
+        };
+
+        // Build prompts
+        let system_prompt = prompt::get_system_prompt();
+        let user_prompt = prompt::build_user_prompt(&context);
+
+        self.logger.info("complete", &format!(
+            "System prompt: {} chars, User prompt: {} chars",
+            system_prompt.len(), user_prompt.len()
+        ));
+
+        // Get provider
+        let provider = match providers::get_provider(&self.config.provider) {
+            Ok(p) => p,
+            Err(e) => {
+                self.logger.error("complete", &format!("Provider error: {e}"));
+                return RpcResponse::error(request.id, -32603, e);
+            }
+        };
+
+        // Determine if this is a chat request with history
+        let conversation_history: Option<Vec<ChatMessage>> = request.params
+            .get("conversation_history")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+        // Call provider
+        let provider_result = if let Some(messages) = conversation_history {
+            // Chat mode with history — append current user prompt
+            let mut all_messages = messages;
+            all_messages.push(ChatMessage {
+                role: "user".to_string(),
+                content: user_prompt.clone(),
+            });
+            provider.chat(&system_prompt, &all_messages, &self.config).await
+        } else {
+            // Single completion
+            provider.complete(&system_prompt, &user_prompt, &self.config).await
+        };
+
+        let provider_result = match provider_result {
+            Ok(r) => r,
+            Err(e) => {
+                self.logger.error("complete", &format!("Provider call failed: {e}"));
+                return RpcResponse::error(request.id, -32603, e);
+            }
+        };
+
+        self.logger.info("complete", &format!(
+            "Provider returned {} chars (hint: {})",
+            provider_result.content.len(), provider_result.provider_hint
+        ));
+
+        // Parse the response
+        let parsed = parser::parse(&provider_result.content, Some(&provider_result.provider_hint));
+
+        // Check for parse errors
+        if let Some(ref parse_error) = parsed.parse_error {
+            self.logger.error("complete", &format!("Parse error: {parse_error}"));
+            return RpcResponse::error(request.id, -32603, format!("Parse error: {parse_error}"));
+        }
+
+        // Build result JSON from parsed fields
+        let mut result = serde_json::Map::new();
+
+        if let Some(ref mode) = parsed.mode {
+            result.insert("mode".to_string(), Value::String(mode.clone()));
+        }
+        if let Some(ref filename) = parsed.filename {
+            result.insert("filename".to_string(), Value::String(filename.clone()));
+        }
+        if let Some(ref changes) = parsed.changes {
+            result.insert("changes".to_string(), changes.clone());
+        }
+        if let Some(ref language) = parsed.language {
+            result.insert("language".to_string(), Value::String(language.clone()));
+        }
+        if let Some(ref explanation) = parsed.explanation {
+            result.insert("explanation".to_string(), Value::String(explanation.clone()));
+        }
+        if let Some(ref code) = parsed.code {
+            result.insert("code".to_string(), Value::String(code.clone()));
+        }
+        if let Some(ref warning) = parsed.warning {
+            result.insert("warning".to_string(), Value::String(warning.clone()));
+        }
+        if let Some(ref thinking) = parsed.thinking_formatted {
+            result.insert("thinking_formatted".to_string(), Value::String(thinking.clone()));
+        }
+        result.insert("format_detected".to_string(), Value::String(parsed.format_detected.clone()));
+
+        let result_value = Value::Object(result);
+
+        // Validate if it has mode field (skip validation for raw code responses)
+        if parsed.mode.is_some() {
+            if let Err(errors) = schema::validate_response(&result_value) {
+                let error_msg = schema::format_validation_errors(&errors);
+                self.logger.error("complete", &format!("Schema validation failed: {error_msg}"));
+                // Return the result anyway but with validation errors attached
+                let mut result_map = result_value.as_object().unwrap().clone();
+                result_map.insert("validation_errors".to_string(),
+                    Value::Array(errors.into_iter().map(Value::String).collect()));
+                return RpcResponse::success(request.id, Value::Object(result_map));
+            }
+        }
+
+        self.logger.info("complete", "=== COMPLETE REQUEST END ===");
+        RpcResponse::success(request.id, result_value)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_initialize_with_config() {
+    #[tokio::test]
+    async fn test_initialize_with_config() {
         let mut handler = Handler::new();
         let request = RpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -197,7 +322,7 @@ mod tests {
                 }
             }),
         };
-        let response = handler.dispatch(request);
+        let response = handler.dispatch(request).await;
         let result = response.result.unwrap();
         assert_eq!(result["ok"], true);
         assert_eq!(handler.config.provider, "claude-cli");
@@ -205,8 +330,8 @@ mod tests {
         assert_eq!(handler.config.log_level, "DEBUG");
     }
 
-    #[test]
-    fn test_get_config() {
+    #[tokio::test]
+    async fn test_get_config() {
         let mut handler = Handler::new();
         handler.config.provider = "ollama".to_string();
 
@@ -216,13 +341,13 @@ mod tests {
             method: "get_config".to_string(),
             params: serde_json::json!({"key": "provider"}),
         };
-        let response = handler.dispatch(request);
+        let response = handler.dispatch(request).await;
         let result = response.result.unwrap();
         assert_eq!(result["value"], "ollama");
     }
 
-    #[test]
-    fn test_set_config() {
+    #[tokio::test]
+    async fn test_set_config() {
         let mut handler = Handler::new();
         let request = RpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -230,13 +355,13 @@ mod tests {
             method: "set_config".to_string(),
             params: serde_json::json!({"key": "log_level", "value": "ERROR"}),
         };
-        let response = handler.dispatch(request);
+        let response = handler.dispatch(request).await;
         assert!(response.result.is_some());
         assert_eq!(handler.config.log_level, "ERROR");
     }
 
-    #[test]
-    fn test_unknown_method() {
+    #[tokio::test]
+    async fn test_unknown_method() {
         let mut handler = Handler::new();
         let request = RpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -244,13 +369,13 @@ mod tests {
             method: "nonexistent".to_string(),
             params: Value::Null,
         };
-        let response = handler.dispatch(request);
+        let response = handler.dispatch(request).await;
         assert!(response.error.is_some());
         assert_eq!(response.error.unwrap().code, -32601);
     }
 
-    #[test]
-    fn test_shutdown() {
+    #[tokio::test]
+    async fn test_shutdown() {
         let mut handler = Handler::new();
         let request = RpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -258,8 +383,24 @@ mod tests {
             method: "shutdown".to_string(),
             params: Value::Null,
         };
-        let response = handler.dispatch(request);
+        let response = handler.dispatch(request).await;
         let result = response.result.unwrap();
         assert_eq!(result["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_complete_invalid_context() {
+        let mut handler = Handler::new();
+        handler.config.provider = "claude".to_string();
+
+        let request = RpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(Value::Number(3.into())),
+            method: "complete".to_string(),
+            params: Value::String("not an object".to_string()),
+        };
+        let response = handler.dispatch(request).await;
+        assert!(response.error.is_some());
+        assert!(response.error.unwrap().message.contains("Invalid context"));
     }
 }

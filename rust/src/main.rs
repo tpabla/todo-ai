@@ -1,7 +1,10 @@
 mod config;
+mod http;
 mod logger;
 mod parser;
 mod prompt;
+mod providers;
+mod retry;
 mod rpc;
 mod schema;
 
@@ -76,7 +79,7 @@ async fn main() {
 
         // Notifications (no id) don't get a response
         let is_notification = request.id.is_none();
-        let response = handler.dispatch(request);
+        let response = handler.dispatch(request).await;
 
         if !is_notification {
             let mut out = serde_json::to_string(&response).unwrap();

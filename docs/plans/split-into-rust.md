@@ -46,7 +46,22 @@ IPC: JSON-RPC 2.0 over Unix domain sockets.
 - Added `regex = "1"` to Cargo.toml
 - 24 parser tests
 
-**Current test count: 54 passing**
+### Phase 4: Providers + HTTP
+- `rust/src/http.rs` — reqwest-based async HTTP client with timeout and redirect support
+- `rust/src/retry.rs` — exponential backoff with jitter, retryable error detection (timeout, 429, 502-504)
+- `rust/src/providers/mod.rs` — `Provider` async trait (`complete` + `chat`), `get_provider()` registry
+- `rust/src/providers/claude.rs` — Anthropic API (x-api-key, anthropic-version header, content extraction)
+- `rust/src/providers/openai.rs` — OpenAI API (Bearer token, chat/completions endpoint)
+- `rust/src/providers/ollama.rs` — Ollama API (generate + chat endpoints, no auth)
+- `rust/src/providers/claude_cli.rs` — Claude CLI provider (spawns `claude -p` via tokio::process, stdin piping)
+- `rust/src/rpc.rs` — added async `complete` RPC: context → build prompt → call provider → parse → validate → return
+  - dispatch() is now async
+  - Returns validation_errors in result if schema fails (Lua handles display)
+- `lua/todo-ai/unified_prompt.lua` — `send_to_provider()` now uses Rust backend when available, falls back to Lua providers
+- Added deps: `reqwest` (rustls-tls), `rand`, `async-trait`
+- 10 new tests (4 claude_cli, 4 retry, 1 http, 1 rpc complete)
+
+**Current test count: 64 passing**
 
 ### Other changes
 - `lua/todo-ai/providers/claude_cli.lua` — new provider using `claude -p` CLI (OAuth subscription auth, stdin piping for large prompts)
@@ -55,14 +70,6 @@ IPC: JSON-RPC 2.0 over Unix domain sockets.
 - `plugin/todo-ai.vim` — commented out premature setup() call (conflicts with lazy.nvim)
 
 ## Next Up
-
-### Phase 4: Providers + HTTP (critical phase)
-- `rust/src/http.rs` — reqwest HTTP client
-- `rust/src/retry.rs` — exponential backoff with jitter
-- `rust/src/providers/` — claude.rs, openai.rs, ollama.rs, mod.rs (Provider trait)
-- Wire `complete` RPC: context → prompt → HTTP → stream → parse → validate → return
-- Refactor `unified_prompt.lua` to call backend.request("complete", ...)
-- Delete Lua: providers/*.lua, provider_base.lua, http_client.lua, retry_manager.lua, parser.lua, schema_validator.lua, prompt_builder.lua, prompt_config.lua
 
 ### Phase 5: Context + Scanner
 - `rust/src/context.rs` — project context generation (replaces context_compact.lua)
