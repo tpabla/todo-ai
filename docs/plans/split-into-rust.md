@@ -95,11 +95,19 @@ IPC: JSON-RPC 2.0 over Unix domain sockets.
 
 **Current test count: 81 passing**
 
-## Next Up
-
 ### Phase 6: Chat Persistence
-- `rust/src/chat_store.rs` — save/load/list .todoai/chats/*.md
-- Wire save_chat, load_chat, list_chats RPCs
+- `rust/src/chat_store.rs` — save/load/list `.todoai/chats/*.md`
+  - `save_chat()` — serialize messages to markdown, skip thinking messages
+  - `load_chat()` — parse markdown back into messages with role/content/timestamp
+  - `list_chats()` — enumerate sessions sorted newest first
+  - `cleanup_old_sessions()` — remove excess sessions beyond max count
+  - 7 tests
+- `rpc.rs` — added `save_chat`, `load_chat`, `list_chats` RPC methods
+- `lua/todo-ai/chat.lua` — replaced file I/O with backend RPC calls for save/load/list
+
+**Current test count: 88 passing**
+
+## All Phases Complete
 
 ## Architecture Notes
 

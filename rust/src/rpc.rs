@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::chat_store;
 use crate::config::Config;
 use crate::context;
 use crate::logger::{LogLevel, Logger};
@@ -95,6 +96,9 @@ impl Handler {
             "complete" => self.handle_complete(request).await,
             "scan_project_context" => self.handle_scan_project_context(request),
             "scan_todos" => self.handle_scan_todos(request),
+            "save_chat" => self.handle_save_chat(request),
+            "load_chat" => self.handle_load_chat(request),
+            "list_chats" => self.handle_list_chats(request),
             _ => RpcResponse::error(
                 request.id,
                 -32601,
@@ -264,6 +268,87 @@ impl Handler {
                 "file_count": todos_by_file.len(),
             }),
         )
+    }
+
+    /// Handle `save_chat` RPC: persist chat messages to markdown file.
+    fn handle_save_chat(&self, request: RpcRequest) -> RpcResponse {
+        let project_root = request.params.get("project_root")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
+        let session_id = match request.params.get("session_id").and_then(|v| v.as_str()) {
+            Some(id) => id,
+            None => return RpcResponse::error(request.id, -32602, "Missing session_id".to_string()),
+        };
+        let session_start = request.params.get("session_start")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        let messages: Vec<chat_store::ChatMessage> = request.params
+            .get("messages")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let max_sessions = request.params.get("max_sessions")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10) as usize;
+
+        match chat_store::save_chat(project_root, session_id, session_start, &messages) {
+            Ok(path) => {
+                // Clean up old sessions
+                let removed = chat_store::cleanup_old_sessions(project_root, max_sessions);
+                if removed > 0 {
+                    self.logger.info("chat_store", &format!("Cleaned up {removed} old sessions"));
+                }
+                RpcResponse::success(request.id, serde_json::json!({
+                    "ok": true,
+                    "path": path,
+                    "cleaned_up": removed,
+                }))
+            }
+            Err(e) => RpcResponse::error(request.id, -32603, e),
+        }
+    }
+
+    /// Handle `load_chat` RPC: load a saved chat session.
+    fn handle_load_chat(&self, request: RpcRequest) -> RpcResponse {
+        let project_root = request.params.get("project_root")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
+        let session_id = match request.params.get("session_id").and_then(|v| v.as_str()) {
+            Some(id) => id,
+            None => return RpcResponse::error(request.id, -32602, "Missing session_id".to_string()),
+        };
+
+        match chat_store::load_chat(project_root, session_id) {
+            Ok(messages) => {
+                let json_messages: Vec<serde_json::Value> = messages
+                    .iter()
+                    .map(|m| serde_json::to_value(m).unwrap_or_default())
+                    .collect();
+                RpcResponse::success(request.id, serde_json::json!({
+                    "messages": json_messages,
+                    "session_id": session_id,
+                }))
+            }
+            Err(e) => RpcResponse::error(request.id, -32603, e),
+        }
+    }
+
+    /// Handle `list_chats` RPC: list available chat sessions.
+    fn handle_list_chats(&self, request: RpcRequest) -> RpcResponse {
+        let project_root = request.params.get("project_root")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
+
+        let sessions = chat_store::list_chats(project_root);
+        let json_sessions: Vec<serde_json::Value> = sessions
+            .iter()
+            .map(|s| serde_json::to_value(s).unwrap_or_default())
+            .collect();
+
+        RpcResponse::success(request.id, serde_json::json!({
+            "sessions": json_sessions,
+        }))
     }
 
     /// Handle the `complete` RPC: build prompt → call provider → parse → validate → return.

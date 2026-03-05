@@ -1,3 +1,4 @@
+mod chat_store;
 mod config;
 mod context;
 mod http;

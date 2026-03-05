@@ -329,175 +329,82 @@ function M.init_session()
   return M.state.session_id
 end
 
--- Clean up old chat sessions
-function M.cleanup_old_sessions(max_sessions)
-  local config = require('todo-ai.config')
-  max_sessions = max_sessions or config.get('max_chat_sessions') or 10
-
-  local project_root = vim.fn.getcwd()
-  local chat_dir = project_root .. '/.todoai/chats'
-
-  -- Get all chat files
-  local files = vim.fn.glob(chat_dir .. '/*.md', false, true)
-
-  if #files > max_sessions then
-    -- Sort by modification time (oldest first)
-    local file_times = {}
-    for _, file in ipairs(files) do
-      local stat = vim.loop.fs_stat(file)
-      if stat then
-        table.insert(file_times, {file = file, mtime = stat.mtime.sec})
-      end
-    end
-
-    table.sort(file_times, function(a, b) return a.mtime < b.mtime end)
-
-    -- Delete oldest files beyond max_sessions
-    local to_delete = #file_times - max_sessions
-    for i = 1, to_delete do
-      vim.fn.delete(file_times[i].file)
-    end
-  end
-end
-
--- Save chat history to session file
+-- Save chat history via Rust backend
 function M.save_chat_history()
-  local project_root = vim.fn.getcwd()
-  local chat_dir = project_root .. '/.todoai/chats'
+  local backend = require('todo-ai.backend')
+  if not backend.is_available() then return end
 
-  -- Create directory if it doesn't exist
-  vim.fn.mkdir(chat_dir, 'p')
-
-  -- Get or create session
   local session_id = M.init_session()
-  local chat_file = chat_dir .. '/' .. session_id .. '.md'
+  local config = require('todo-ai.config')
 
-  -- Build chat history content
-  local content = {}
-  table.insert(content, '# Todo-AI Chat Session: ' .. session_id)
-  table.insert(content, 'Started: ' .. (M.state.session_start or os.date('%Y-%m-%d %H:%M:%S')))
-  table.insert(content, 'Last Updated: ' .. os.date('%Y-%m-%d %H:%M:%S'))
-  table.insert(content, '')
-  table.insert(content, '## Messages')
-  table.insert(content, '')
-
-  for _, msg in ipairs(M.state.messages) do
-    if not msg.is_thinking then
-      table.insert(content, '### ' .. (msg.role == 'user' and '👤 User' or '🤖 AI') .. ' _[' .. msg.timestamp .. ']_')
-      table.insert(content, '')
-      -- Properly indent message content
-      local msg_lines = vim.split(msg.content or '', '\n')
-      for _, line in ipairs(msg_lines) do
-        table.insert(content, line)
-      end
-      table.insert(content, '')
-      table.insert(content, '---')
-      table.insert(content, '')
+  backend.request("save_chat", {
+    project_root = vim.fn.getcwd(),
+    session_id = session_id,
+    session_start = M.state.session_start or os.date('%Y-%m-%d %H:%M:%S'),
+    messages = M.state.messages,
+    max_sessions = config.get('max_chat_sessions') or 10,
+  }, function(_, err)
+    if err then
+      local logger = require('todo-ai.logger')
+      logger.error('chat', 'Failed to save chat: ' .. tostring(err))
     end
-  end
-
-  -- Write to file
-  local file = io.open(chat_file, 'w')
-  if file then
-    file:write(table.concat(content, '\n'))
-    file:close()
-  end
-
-  -- Clean up old sessions
-  M.cleanup_old_sessions()
+  end)
 end
 
--- Load a previous chat session
+-- Load a previous chat session via Rust backend
 function M.load_session(session_id)
-  local project_root = vim.fn.getcwd()
-  local chat_file = project_root .. '/.todoai/chats/' .. session_id .. '.md'
-
-  if vim.fn.filereadable(chat_file) == 1 then
-    local file = io.open(chat_file, 'r')
-    if file then
-      local content = file:read('*all')
-      file:close()
-
-      -- Parse the session file to restore messages
-      -- This is a simplified parser - could be enhanced
-      M.state.messages = {}
-      M.state.session_id = session_id
-
-      -- Simple parsing of the markdown format
-      local in_message = false
-      local current_role = nil
-      local current_content = {}
-      local current_time = nil
-
-      for line in content:gmatch("[^\n]+") do
-        if line:match("^### 👤 User %[(.-)%]") then
-          -- Save previous message if any
-          if current_role and #current_content > 0 then
-            M.add_message(current_role, table.concat(current_content, '\n'))
-          end
-          -- Start new user message
-          current_role = 'user'
-          current_time = line:match("%[(.-)%]")
-          current_content = {}
-          in_message = true
-        elseif line:match("^### 🤖 AI %[(.-)%]") then
-          -- Save previous message if any
-          if current_role and #current_content > 0 then
-            M.add_message(current_role, table.concat(current_content, '\n'))
-          end
-          -- Start new AI message
-          current_role = 'ai'
-          current_time = line:match("%[(.-)%]")
-          current_content = {}
-          in_message = true
-        elseif line:match("^---") then
-          -- End of message
-          if current_role and #current_content > 0 then
-            M.add_message(current_role, table.concat(current_content, '\n'))
-          end
-          current_role = nil
-          current_content = {}
-          in_message = false
-        elseif in_message and not line:match("^#") then
-          -- Part of message content
-          table.insert(current_content, line)
-        end
-      end
-
-      -- Don't forget last message if file doesn't end with ---
-      if current_role and #current_content > 0 then
-        M.add_message(current_role, table.concat(current_content, '\n'))
-      end
-
-      return true
-    end
+  local backend = require('todo-ai.backend')
+  if not backend.is_available() then
+    error("Rust backend not available")
   end
-  return false
+
+  local loaded = false
+  backend.request("load_chat", {
+    project_root = vim.fn.getcwd(),
+    session_id = session_id,
+  }, function(result, err)
+    if err then
+      vim.notify('Failed to load session: ' .. tostring(err), vim.log.levels.ERROR)
+      return
+    end
+
+    M.state.messages = {}
+    M.state.session_id = session_id
+
+    if result and result.messages then
+      for _, msg in ipairs(result.messages) do
+        table.insert(M.state.messages, {
+          role = msg.role,
+          content = msg.content,
+          timestamp = msg.timestamp or '',
+          is_thinking = msg.is_thinking or false,
+        })
+      end
+    end
+
+    M.render()
+    loaded = true
+  end)
+
+  return loaded
 end
 
--- List available chat sessions
+-- List available chat sessions via Rust backend
 function M.list_sessions()
-  local project_root = vim.fn.getcwd()
-  local chat_dir = project_root .. '/.todoai/chats'
-
-  local files = vim.fn.glob(chat_dir .. '/*.md', false, true)
-  local sessions = {}
-
-  for _, file in ipairs(files) do
-    local filename = vim.fn.fnamemodify(file, ':t:r')
-    local stat = vim.loop.fs_stat(file)
-    if stat then
-      table.insert(sessions, {
-        id = filename,
-        file = file,
-        mtime = os.date('%Y-%m-%d %H:%M:%S', stat.mtime.sec),
-        size = stat.size
-      })
-    end
+  local backend = require('todo-ai.backend')
+  if not backend.is_available() then
+    return {}
   end
 
-  -- Sort by modification time (newest first)
-  table.sort(sessions, function(a, b) return a.mtime > b.mtime end)
+  local sessions = {}
+  backend.request("list_chats", {
+    project_root = vim.fn.getcwd(),
+  }, function(result, err)
+    if err then return end
+    if result and result.sessions then
+      sessions = result.sessions
+    end
+  end)
 
   return sessions
 end
