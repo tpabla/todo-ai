@@ -172,11 +172,11 @@ function M.get_surrounding_lines(lines, target_line, radius)
 end
 
 function M.accept_change()
-  diff.accept_all()
+  diff.accept_at_cursor()
 end
 
 function M.reject_change()
-  diff.reject_all()
+  diff.reject_at_cursor()
 end
 
 function M.format_response(response)

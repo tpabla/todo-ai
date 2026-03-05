@@ -219,9 +219,16 @@ function M.handle_response(response, error, context)
     local target_buf = nil
 
     if response.filename then
-      -- Build full path
-      local full_path = response.filename:match('^/') and response.filename or
-                       (vim.fn.getcwd() .. '/' .. response.filename)
+      -- Build full path — prefer context.file_path if the filename matches
+      -- to avoid path doubling (e.g. LLM returns "rust/src/main.rs" when cwd already includes "rust/")
+      local full_path
+      if response.filename:match('^/') then
+        full_path = response.filename
+      elseif context.file_path and context.file_path:match(response.filename:gsub('([%(%)%.%%%+%-%*%?%[%^%$])', '%%%1') .. '$') then
+        full_path = context.file_path
+      else
+        full_path = vim.fn.getcwd() .. '/' .. response.filename
+      end
 
       -- Get or create buffer
       target_buf = vim.fn.bufnr(full_path)

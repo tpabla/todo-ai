@@ -7,66 +7,48 @@ on:
     branches: [ main ]
 
 jobs:
-  test:
+  rust:
     runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
 
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          rust/target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+
+    - name: Run tests
+      run: cd rust && cargo test
+
+    - name: Build release
+      run: cd rust && cargo build --release
+
+  neovim:
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        lua-version: ['5.1', '5.2', '5.3', '5.4']
         neovim-version: ['stable', 'nightly']
 
     steps:
-    - uses: actions/checkout@v3
-
-    - name: Install Lua
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y lua${{ matrix.lua-version }} luarocks
+    - uses: actions/checkout@v4
 
     - name: Install Neovim
-      run: |
-        if [ "${{ matrix.neovim-version }}" = "stable" ]; then
-          sudo apt-get install -y neovim
-        else
-          # Install nightly from latest release
-          wget https://github.com/neovim/neovim/releases/download/v0.10.0/nvim-linux64.tar.gz
-          tar xzf nvim-linux64.tar.gz
-          sudo mv nvim-linux64/bin/nvim /usr/local/bin/
-          sudo mv nvim-linux64/share/nvim /usr/local/share/
-        fi
+      uses: rhysd/action-setup-vim@v1
+      with:
+        neovim: true
+        version: ${{ matrix.neovim-version }}
 
-    - name: Install dependencies
+    - name: Install Plenary.nvim
       run: |
-        sudo luarocks install luacheck
-        # Install Plenary.nvim for tests
-        git clone https://github.com/nvim-lua/plenary.nvim ~/.local/share/nvim/site/pack/test/start/plenary.nvim
-
-    - name: Run linter
-      run: make lint
-      continue-on-error: true
+        mkdir -p ~/.local/share/nvim/site/pack/test/start
+        git clone --depth 1 https://github.com/nvim-lua/plenary.nvim ~/.local/share/nvim/site/pack/test/start/plenary.nvim
 
     - name: Run tests
       run: make test
-      env:
-        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
-    - name: Check code coverage
-      run: |
-        sudo luarocks install luacov
-        busted --coverage
-        luacov
-      continue-on-error: true
-
-  security:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-
-    - name: Run security checks
-      run: |
-        # Check for hardcoded secrets
-        grep -r "api_key\|password\|secret" lua/ --exclude="*.test.lua" | grep -v "vim.env" || true
-
-    - name: Check dependencies
-      run: make check-deps

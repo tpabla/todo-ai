@@ -25,23 +25,10 @@ struct Args {
     socket: PathBuf,
 }
 
+//TODO: @ai write a haiku about this code in a comment here
+
 #[tokio::main]
 async fn main() {
-
-    eprintln!(r#"
-  ╔════════════════════════════════════════╗
-  ║                                        ║
-  ║     ▄▄▄▄▄  ▄▄▄▄  ▄▄▄▄   ▄▄▄▄▄          ║
-  ║       █   █    █ █    █ █    █         ║
-  ║       █   █    █ █    █ █    █         ║
-  ║       █   █▄▄▄▄█ █▄▄▄▄█ █▄▄▄▄█         ║
-  ║                                        ║
-  ║          ✨  todo-ai backend  ✨       ║
-  ║              ready to rock!            ║
-  ║                                        ║
-  ╚════════════════════════════════════════╝
-    "#);
-
     let args = Args::parse();
     let socket_path = &args.socket;
 
