@@ -1,9 +1,7 @@
 ---@class DryTagger
 local M = {}
 
-local diff = require('todo-ai.diff_native')
 local config = require('todo-ai.config')
-local providers = require('todo-ai.providers')
 
 ---Scan codebase and suggest DRY tags for reusable functions
 function M.suggest_dry_tags()
@@ -46,8 +44,8 @@ function M.analyze_file_for_dry_tags(file_path)
 
   local rel_path = vim.fn.fnamemodify(file_path, ':.')
 
-  -- Build context about the file
-  local file_context = string.format([[
+  -- Build instruction for the LLM
+  local instruction = string.format([[
 Analyze this code file for functions that should be tagged for reusability.
 
 File: %s
@@ -65,37 +63,19 @@ Instructions:
    - # PATTERN: [description] - for reusable patterns
    - # COMMON: [description] - for common functionality
 
-Respond with suggested line insertions in this format:
-{
-  "suggestions": [
-    {
-      "line": 5,
-      "tag": "# DRY: Input validation helper",
-      "function_name": "validate_input",
-      "reason": "This function validates user input and could be reused across multiple components"
-    }
-  ]
-}
-
 Only suggest tags for functions that would genuinely benefit from being tagged for reuse.
 ]], rel_path, table.concat(content, '\n'))
 
-  -- Get provider
-  local provider_name = config.get('provider')
-  local provider = providers.get(provider_name)
+  -- Route through unified_prompt → Rust backend
+  local unified_prompt = require('todo-ai.unified_prompt')
+  local context = unified_prompt.create_context({
+    mode = 'chat',
+    instruction = instruction,
+  })
 
-  if not provider then
-    vim.notify('Error: Provider ' .. provider_name .. ' not found', vim.log.levels.ERROR)
-    return
-  end
-
-  -- Request analysis
-  provider.complete_async("Analyze this file for DRY tag opportunities", file_context, {
-    model = config.get('model'),
-    temperature = 0.1  -- Low temperature for consistent analysis
-  }, function(response, error)
-    if error then
-      vim.notify('Error analyzing ' .. rel_path .. ': ' .. error, vim.log.levels.ERROR)
+  unified_prompt.send_to_provider(context, function(response, err)
+    if err then
+      vim.notify('Error analyzing ' .. rel_path .. ': ' .. err, vim.log.levels.ERROR)
       return
     end
 
@@ -126,22 +106,11 @@ function M.process_dry_suggestions(file_path, response)
   -- Process each suggestion
   for _, suggestion in ipairs(response.suggestions) do
     local line_num = suggestion.line or 1
-    local tag_line = suggestion.tag or "# DRY: Reusable function"
     local func_name = suggestion.function_name or "unknown"
     local reason = suggestion.reason or "No reason provided"
 
-    -- Show the suggestion as a diff
-    local original_lines = vim.api.nvim_buf_get_lines(bufnr, line_num - 1, line_num, false)
-    local modified_lines = {tag_line}
-    if #original_lines > 0 then
-      table.insert(modified_lines, original_lines[1])
-    end
-
-    local description = string.format("Add DRY tag for %s(): %s", func_name, reason)
-
-    -- Show diff for this suggestion
+    -- Show the suggestion
     vim.schedule(function()
-
       vim.notify(string.format("DRY tag suggestion for %s in %s:%d",
         func_name, rel_path, line_num), vim.log.levels.INFO)
     end)

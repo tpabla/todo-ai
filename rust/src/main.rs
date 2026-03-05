@@ -13,6 +13,7 @@ use rpc::{Handler, RpcRequest, RpcResponse};
 use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
+use tokio::signal;
 
 #[derive(Parser)]
 #[command(name = "todo-ai-backend")]
@@ -23,6 +24,21 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
+
+    eprintln!(r#"
+  ╔════════════════════════════════════════╗
+  ║                                        ║
+  ║     ▄▄▄▄▄  ▄▄▄▄  ▄▄▄▄   ▄▄▄▄▄          ║
+  ║       █   █    █ █    █ █    █         ║
+  ║       █   █    █ █    █ █    █         ║
+  ║       █   █▄▄▄▄█ █▄▄▄▄█ █▄▄▄▄█         ║
+  ║                                        ║
+  ║          ✨  todo-ai backend  ✨       ║
+  ║              ready to rock!            ║
+  ║                                        ║
+  ╚════════════════════════════════════════╝
+    "#);
+
     let args = Args::parse();
     let socket_path = &args.socket;
 
@@ -93,6 +109,8 @@ async fn main() {
         if is_shutdown {
             break;
         }
+
+        // TODO: @ai we should probably add graceful shutdown by signals as well
     }
 
     // Clean up socket file

@@ -69,6 +69,16 @@ IPC: JSON-RPC 2.0 over Unix domain sockets.
 - `lua/todo-ai/config.lua` — added claude-cli to valid_providers, model now required (no default)
 - `plugin/todo-ai.vim` — commented out premature setup() call (conflicts with lazy.nvim)
 
+### Lua Cleanup (post Phase 4)
+- Deleted 12 Lua modules now handled by Rust:
+  - `providers/claude.lua`, `providers/openai.lua`, `providers/ollama.lua`, `providers/claude_cli.lua`, `providers/init.lua`
+  - `provider_base.lua`, `http_client.lua`, `retry_manager.lua`
+  - `parser.lua`, `schema_validator.lua`, `prompt_builder.lua`, `prompt_config.lua`
+- Removed `lua/todo-ai/providers/` directory entirely
+- `lua/todo-ai/init.lua` — backend.start() is now required (error if binary not found), removed providers require/setup
+- `lua/todo-ai/unified_prompt.lua` — removed `build_complete_prompt()`, removed Lua fallback path from `send_to_provider()` (error if backend not available), removed `parser`/`schema_validator` from `handle_response()` (Rust does parsing + validation)
+- `lua/todo-ai/dry_tagger.lua` — routes through `unified_prompt.send_to_provider()` instead of direct provider calls
+
 ## Next Up
 
 ### Phase 5: Context + Scanner

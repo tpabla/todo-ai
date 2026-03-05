@@ -3,8 +3,6 @@ local scanner = require('todo-ai.scanner')
 local diff = require('todo-ai.diff')
 local chat = require('todo-ai.chat')
 local config = require('todo-ai.config')
--- Providers will be loaded after config setup
-local providers
 
 M.state = {
   current_todo = nil,
@@ -19,21 +17,18 @@ function M.setup(opts)
   local logger = require('todo-ai.logger')
   logger.init(config.config)
 
-  -- Load providers after config is set up
-  providers = require('todo-ai.providers')
-  providers.setup()
-
   -- Check dependencies
   local deps = require('todo-ai.dependencies')
   deps.check_dependencies()
 
-
-  -- Start Rust backend if binary exists
+  -- Start Rust backend
   local backend = require('todo-ai.backend')
   local plugin_dir = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":h:h:h")
   local binary = plugin_dir .. "/rust/target/release/todo-ai-backend"
   if vim.fn.executable(binary) == 1 then
-    pcall(backend.start, config.config)
+    backend.start(config.config)
+  else
+    error("todo-ai-backend binary not found at: " .. binary .. " — run 'make build-rust'")
   end
 
   -- Setup optional integrations
@@ -297,10 +292,7 @@ end
 
 -- Process all TODOs in the project
 function M.process_project_todos()
-  local scanner = require('todo-ai.scanner')
-  local chat = require('todo-ai.chat')
-  local config = require('todo-ai.config')
-  local prompt_builder = require('todo-ai.prompt_builder')
+  local unified_prompt = require('todo-ai.unified_prompt')
 
   -- Open chat window first
   M.open_chat()
@@ -317,7 +309,7 @@ function M.process_project_todos()
   -- Format all TODOs for context
   local formatted_todos = scanner.format_project_todos(todos_by_file)
 
-  -- Build special prompt for project-wide TODOs
+  -- Build instruction
   local instruction = [[Process all the TODOs found in the project.
 CRITICAL: Return changes in a logical order for a developer to review:
 1. Group related changes together
@@ -325,71 +317,21 @@ CRITICAL: Return changes in a logical order for a developer to review:
 3. Provide reasoning in the explanation for each change about WHY this order makes sense
 4. Each change should include the file path in the description]]
 
-  local context = {
-    project_todos = formatted_todos,
-    mode = 'project_scan'
-  }
-
-  -- Get provider and process
-  local provider_name = config.get('provider')
-  local provider = require('todo-ai.providers')[provider_name]
-
-  if not provider then
-    chat.add_message('ai', 'Error: Provider ' .. provider_name .. ' not found')
-    return
-  end
+  -- Create context for the backend
+  local context = unified_prompt.create_context({
+    mode = 'chat',
+    instruction = instruction,
+  })
+  context.project_todos = formatted_todos
+  context.mode = 'project_scan'
 
   -- Show thinking indicator
-  chat.show_thinking()
+  chat.show_thinking(config.get('model'))
 
-  -- Request completion
-  provider.complete_async(instruction, vim.fn.json_encode(context), {
-    model = config.get('model'),
-    temperature = config.get('temperature')
-  }, function(response, error)
+  -- Send through unified prompt (routes to Rust backend)
+  unified_prompt.send_to_provider(context, function(response, err)
     chat.hide_thinking()
-
-    if error then
-      chat.add_message('ai', 'Error: ' .. error)
-      vim.notify('Error: ' .. error, vim.log.levels.ERROR)
-      return
-    end
-
-    -- For project-wide changes, we need to handle multiple files
-    if response.changes then
-      -- Group changes by file
-      local changes_by_file = {}
-      for _, change in ipairs(response.changes) do
-        -- Extract file from description or use current buffer
-        local file = change.file or vim.api.nvim_get_current_buf()
-        if not changes_by_file[file] then
-          changes_by_file[file] = {}
-        end
-        table.insert(changes_by_file[file], change)
-      end
-
-      -- Store for sequential processing
-      M.state.project_changes = changes_by_file
-      M.state.current_file_index = 1
-      local files = vim.tbl_keys(changes_by_file)
-      M.state.project_files = files
-
-      -- Start with first file
-      if #files > 0 then
-        local first_file = files[1]
-        vim.cmd('edit ' .. first_file)
-
-        -- Show diff for first file
-        local bufnr = vim.api.nvim_get_current_buf()
-        diff.show_response(bufnr, {changes = changes_by_file[first_file], explanation = response.explanation})
-      end
-    end
-
-    -- Add to chat
-    local formatted = M.format_response(response)
-    if formatted and formatted ~= '' then
-      chat.add_message('ai', formatted)
-    end
+    unified_prompt.handle_response(response, err, context)
   end)
 end
 

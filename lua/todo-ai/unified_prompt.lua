@@ -2,9 +2,6 @@
 -- Single source of truth for TODO scan, chat, and visual mode
 local M = {}
 
-local prompt_builder = require('todo-ai.prompt_builder')
-local prompt_config = require('todo-ai.prompt_config')
-local parser = require('todo-ai.parser')
 local logger = require('todo-ai.logger')
 
 -- Unified context structure that all paths should use
@@ -165,106 +162,25 @@ function M.get_surrounding_lines(lines, target_line, radius)
   return result
 end
 
--- Build the complete prompt (system + user) for any mode
-function M.build_complete_prompt(context)
-  -- Get system prompt (schema and rules)
-  local system_prompt = prompt_config.get_schema_description()
-
-  -- Build user prompt based on context
-  local context_json = vim.fn.json_encode(context)
-  local user_prompt = prompt_builder.build_user_prompt(context.instruction, context_json)
-
-  -- Add mode-specific hints if needed
-  if context.is_visual then
-    user_prompt = user_prompt .. '\n\nIMPORTANT: Return the code changes in JSON format with mode="changes" and filename="' .. context.filename .. '"'
-  elseif context.is_todo then
-    user_prompt = user_prompt .. '\n\nIMPORTANT: Use mode="changes" to provide code modifications for the TODO.'
-  end
-
-  return {
-    system = system_prompt,
-    user = user_prompt,
-    full = system_prompt .. "\n\n" .. user_prompt
-  }
-end
-
--- Send prompt to provider and handle response
+-- Send context to Rust backend for completion
 function M.send_to_provider(context, callback)
   local backend = require('todo-ai.backend')
 
-  -- Use Rust backend if available
-  if backend.is_available() then
-    logger.info('unified_prompt', 'Sending to Rust backend via complete RPC')
-
-    -- Send context directly — Rust builds prompts, calls provider, parses, validates
-    backend.request("complete", context, function(result, rpc_err)
-      if rpc_err then
-        local err_msg = type(rpc_err) == 'table' and rpc_err.message or tostring(rpc_err)
-        callback(nil, err_msg)
-        return
-      end
-      callback(result, nil)
-    end)
-    return
+  if not backend.is_available() then
+    error("Rust backend not available — cannot send to provider")
   end
 
-  -- Fallback to Lua providers if backend not running
-  local providers = require('todo-ai.providers')
-  local config = require('todo-ai.config')
+  logger.info('unified_prompt', 'Sending to Rust backend via complete RPC')
 
-  -- Ensure providers are initialized
-  if not providers._initialized then
-    providers.setup()
-  end
-
-  local provider_name = config.get('provider')
-  local provider = providers.get(provider_name)
-
-  if not provider then
-    callback(nil, 'Provider ' .. provider_name .. ' not found')
-    return
-  end
-
-  -- Build the prompt
-  local prompts = M.build_complete_prompt(context)
-
-  -- Use complete_async for TODO processing style (includes system prompt)
-  if provider.complete_async then
-    -- Send as instruction + context (provider will add system prompt)
-    provider.complete_async(context.instruction, vim.fn.json_encode(context), {
-      model = config.get('model'),
-      temperature = config.get('temperature')
-    }, callback)
-  elseif provider.chat_async then
-    -- For chat-based providers, send as messages
-    local messages = {}
-
-    -- Add system prompt
-    table.insert(messages, {role = 'system', content = prompts.system})
-
-    -- Add conversation history if provided
-    if context.conversation_history then
-      for _, msg in ipairs(context.conversation_history) do
-        -- Only include user and assistant messages (not system or thinking)
-        if msg.role == 'user' or msg.role == 'assistant' then
-          table.insert(messages, {
-            role = msg.role,
-            content = msg.content
-          })
-        end
-      end
+  -- Send context directly — Rust builds prompts, calls provider, parses, validates
+  backend.request("complete", context, function(result, rpc_err)
+    if rpc_err then
+      local err_msg = type(rpc_err) == 'table' and rpc_err.message or tostring(rpc_err)
+      callback(nil, err_msg)
+      return
     end
-
-    -- Add current user message
-    table.insert(messages, {role = 'user', content = prompts.user})
-
-    provider.chat_async(messages, {
-      model = config.get('model'),
-      temperature = config.get('temperature')
-    }, callback)
-  else
-    callback(nil, 'Provider does not support async operations')
-  end
+    callback(result, nil)
+  end)
 end
 
 -- Handle provider response uniformly
@@ -278,63 +194,14 @@ function M.handle_response(response, error, context)
     return
   end
 
-  -- Debug logging for response
-  local logger = require('todo-ai.logger')
-  local validator = require('todo-ai.schema_validator')
-
-  logger.debug('Raw LLM response type: ' .. type(response))
-
-  -- Parse response if it's a string
-  if type(response) == 'string' then
-    logger.debug('Raw response string: ' .. vim.inspect(response))
-    response = parser.parse(response, context.instruction)
-    logger.debug('Parsed response: ' .. vim.inspect(response))
-
-    -- Check for parse errors
-    if response.parse_error then
-      logger.error('Parse error: ' .. response.parse_error)
-      chat.add_message('ai', string.format([[
-## ❌ JSON Parse Error
-
-The LLM returned invalid JSON that couldn't be parsed.
-
-**Error:** %s
-
-**Raw response logged to:** `/tmp/todo-ai.log`
-
-This usually means the LLM included:
-- Extra text before/after the JSON
-- Invalid JSON syntax
-- Markdown code blocks around the JSON
-
-Please try your request again.
-]], response.parse_error))
-      return
-    end
-  else
-    logger.debug('Response object: ' .. vim.inspect(response))
-  end
-
-  -- STRICT VALIDATION - Fail loudly if schema doesn't match
-  local valid, validation_errors = validator.validate_response(response)
-  if not valid then
-    logger.error('Schema validation failed: ' .. vim.inspect(validation_errors))
-
-    -- Show detailed error to user
-    local error_message = validator.format_validation_errors(validation_errors)
-    chat.add_message('ai', error_message)
-
-    -- Log to file for debugging
-    logger.error('Full invalid response: ' .. vim.inspect(response))
-
-    -- STOP PROCESSING - Don't try to guess or recover
-    return
-  end
-
-  -- Log validated fields
-  logger.debug('✓ Schema validation passed')
+  -- Response is already parsed and validated by Rust backend
   logger.debug('Response mode: ' .. tostring(response.mode))
   logger.debug('Response filename: ' .. tostring(response.filename))
+
+  -- Show validation warnings if Rust returned them
+  if response.validation_errors then
+    logger.error('Schema validation warnings: ' .. vim.inspect(response.validation_errors))
+  end
 
   -- Handle based on response mode
   if response.mode == "chat" then
