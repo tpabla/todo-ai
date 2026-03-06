@@ -32,7 +32,7 @@ pub struct PromptContext {
     pub end_line: Option<u32>,
     pub surrounding_lines: Option<Value>,
     pub cached_context: Option<Value>,
-    pub other_buffers: Option<Vec<BufferInfo>>,
+    pub open_buffers: Option<Vec<String>>,
     pub project_todos: Option<String>,
     pub mode: Option<String>,
     pub is_visual: Option<bool>,
@@ -40,30 +40,15 @@ pub struct PromptContext {
     pub is_chat: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct BufferInfo {
-    pub filename: Option<String>,
-    pub name: Option<String>,
-    pub filetype: Option<String>,
-    #[serde(rename = "type")]
-    pub type_: Option<String>,
-}
+/// Max bytes to read from a single open buffer file.
+const MAX_BUFFER_FILE_BYTES: usize = 8000;
 
-impl BufferInfo {
-    fn display_name(&self) -> &str {
-        self.filename
-            .as_deref()
-            .or(self.name.as_deref())
-            .unwrap_or("unknown")
-    }
-
-    fn display_type(&self) -> &str {
-        self.filetype
-            .as_deref()
-            .or(self.type_.as_deref())
-            .unwrap_or("text")
-    }
-}
+/// File extensions considered relevant for code context.
+const RELEVANT_EXTENSIONS: &[&str] = &[
+    "lua", "rs", "py", "js", "ts", "tsx", "jsx", "go", "rb", "java", "c", "cpp", "h", "hpp",
+    "cs", "swift", "kt", "scala", "zig", "vim", "sh", "bash", "zsh", "toml", "yaml", "yml",
+    "json", "md", "txt", "html", "css", "scss",
+];
 
 /// Build the user prompt based on context.
 /// Port of prompt_builder.build_user_prompt().
@@ -89,6 +74,7 @@ pub fn build_user_prompt(context: &PromptContext) -> String {
     build_chat_prompt(context, instruction)
 }
 
+/// Decide which open buffer files are relevant to the instruction and include their contents.
 fn build_context_info(context: &PromptContext) -> String {
     let mut info = String::new();
 
@@ -99,16 +85,84 @@ fn build_context_info(context: &PromptContext) -> String {
         }
     }
 
-    if let Some(ref buffers) = context.other_buffers {
-        if !buffers.is_empty() {
-            info.push_str("\n\nOther Open Files:\n");
-            for buf in buffers {
-                info.push_str(&format!("- {} ({})\n", buf.display_name(), buf.display_type()));
+    if let Some(ref paths) = context.open_buffers {
+        if !paths.is_empty() {
+            let instruction = context.instruction.as_deref().unwrap_or("");
+            let relevant = collect_relevant_buffers(paths, instruction, context.file_path.as_deref());
+
+            if !relevant.is_empty() {
+                info.push_str("\n\nOther Open Files (contents included because they appear relevant):\n");
+                for (path, content) in &relevant {
+                    info.push_str(&format!("\n--- {} ---\n{}\n", path, content));
+                }
+            }
+
+            // List any remaining files that weren't included
+            let included: std::collections::HashSet<&str> = relevant.iter().map(|(p, _)| p.as_str()).collect();
+            let others: Vec<&str> = paths.iter()
+                .map(|p| p.as_str())
+                .filter(|p| !included.contains(p))
+                .collect();
+            if !others.is_empty() {
+                info.push_str("\n\nOther Open Files (not included):\n");
+                for path in others {
+                    info.push_str(&format!("- {}\n", path));
+                }
             }
         }
     }
 
     info
+}
+
+/// Determine which open buffer files are relevant and read their contents.
+/// A file is relevant if the instruction mentions its name/stem, or if it shares
+/// the same directory as the current file, or has the same extension.
+fn collect_relevant_buffers(
+    paths: &[String],
+    instruction: &str,
+    current_file: Option<&str>,
+) -> Vec<(String, String)> {
+    let instruction_lower = instruction.to_lowercase();
+    let current_dir = current_file.and_then(|p| std::path::Path::new(p).parent());
+    let current_ext = current_file.and_then(|p| std::path::Path::new(p).extension().and_then(|e| e.to_str()));
+
+    let mut result = Vec::new();
+
+    for path in paths {
+        let p = std::path::Path::new(path);
+
+        // Skip non-code files
+        let ext = match p.extension().and_then(|e| e.to_str()) {
+            Some(e) if RELEVANT_EXTENSIONS.contains(&e) => e,
+            _ => continue,
+        };
+
+        let filename = p.file_name().and_then(|f| f.to_str()).unwrap_or("");
+        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+
+        let is_relevant =
+            // Instruction mentions the filename or stem
+            instruction_lower.contains(&filename.to_lowercase())
+            || instruction_lower.contains(&stem.to_lowercase())
+            // Same directory as current file
+            || current_dir.map_or(false, |d| p.parent() == Some(d))
+            // Same language as current file
+            || current_ext.map_or(false, |ce| ce == ext);
+
+        if is_relevant {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                let truncated = if content.len() > MAX_BUFFER_FILE_BYTES {
+                    format!("{}\n... [truncated at {} bytes]", &content[..MAX_BUFFER_FILE_BYTES], MAX_BUFFER_FILE_BYTES)
+                } else {
+                    content
+                };
+                result.push((path.clone(), truncated));
+            }
+        }
+    }
+
+    result
 }
 
 fn build_visual_prompt(context: &PromptContext, instruction: &str) -> String {
@@ -279,7 +333,7 @@ mod tests {
             end_line: None,
             surrounding_lines: None,
             cached_context: None,
-            other_buffers: None,
+            open_buffers: None,
             project_todos: None,
             mode: None,
             is_visual: None,
@@ -304,7 +358,7 @@ mod tests {
             end_line: Some(15),
             surrounding_lines: None,
             cached_context: None,
-            other_buffers: None,
+            open_buffers: None,
             project_todos: None,
             mode: None,
             is_visual: Some(true),
@@ -332,7 +386,7 @@ mod tests {
                 {"content": "    // TODO: fix the bug", "is_target": true}
             ])),
             cached_context: None,
-            other_buffers: None,
+            open_buffers: None,
             project_todos: None,
             mode: None,
             is_visual: None,
@@ -360,7 +414,7 @@ mod tests {
             end_line: None,
             surrounding_lines: None,
             cached_context: None,
-            other_buffers: None,
+            open_buffers: None,
             project_todos: Some("TODO: fix thing\nTODO: add stuff".to_string()),
             mode: Some("project_scan".to_string()),
             is_visual: None,
@@ -376,10 +430,16 @@ mod tests {
 
     #[test]
     fn test_context_info_with_buffers() {
+        // Create a temp file so the reader can find it
+        let dir = std::env::temp_dir().join("todo-ai-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let utils_path = dir.join("utils.py");
+        std::fs::write(&utils_path, "def helper():\n    pass\n").unwrap();
+
         let ctx = PromptContext {
-            instruction: Some("test".to_string()),
+            instruction: Some("update utils".to_string()),
             file_content: Some("code".to_string()),
-            file_path: Some("test.py".to_string()),
+            file_path: Some(dir.join("test.py").to_string_lossy().to_string()),
             filename: None,
             language: Some("python".to_string()),
             selected_text: Some("selected".to_string()),
@@ -387,14 +447,7 @@ mod tests {
             end_line: Some(5),
             surrounding_lines: None,
             cached_context: None,
-            other_buffers: Some(vec![
-                BufferInfo {
-                    filename: Some("utils.py".to_string()),
-                    name: None,
-                    filetype: Some("python".to_string()),
-                    type_: None,
-                },
-            ]),
+            open_buffers: Some(vec![utils_path.to_string_lossy().to_string()]),
             project_todos: None,
             mode: None,
             is_visual: Some(true),
@@ -402,6 +455,7 @@ mod tests {
             is_chat: None,
         };
         let prompt = build_user_prompt(&ctx);
-        assert!(prompt.contains("utils.py (python)"));
+        // utils.py is in same dir as test.py, so it should be included with contents
+        assert!(prompt.contains("def helper()"));
     }
 }

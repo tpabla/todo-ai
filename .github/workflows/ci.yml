@@ -24,13 +24,13 @@ jobs:
           rust/target
         key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
 
-    - name: Run tests
-      run: cd rust && cargo test
+    - name: Test Rust
+      run: make test-rust
 
     - name: Build release
-      run: cd rust && cargo build --release
+      run: make build-release
 
-  neovim:
+  lua:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -50,5 +50,5 @@ jobs:
         mkdir -p ~/.local/share/nvim/site/pack/test/start
         git clone --depth 1 https://github.com/nvim-lua/plenary.nvim ~/.local/share/nvim/site/pack/test/start/plenary.nvim
 
-    - name: Run tests
-      run: make test
+    - name: Test Lua
+      run: make test-lua

@@ -74,33 +74,18 @@ function M.enrich_with_project_context(context)
     end
   end
 
-  -- Get other open buffers for context
-  local other_buffers = {}
+  -- Collect absolute paths of other open buffers (Rust reads contents if needed)
+  local open_buffers = {}
   local current_bufnr = context.bufnr
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if bufnr ~= current_bufnr and vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buflisted then
       local name = vim.api.nvim_buf_get_name(bufnr)
-      if name ~= '' and not name:match('^Todo%-AI Chat') then
-        -- Get buffer content (limit size to avoid huge context)
-        local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-        local content = table.concat(lines, '\n')
-
-        -- Limit content size (e.g., first 2000 chars)
-        if #content > 2000 then
-          content = content:sub(1, 2000) .. '\n... [content truncated]'
-        end
-
-        table.insert(other_buffers, {
-          path = name,
-          filename = vim.fn.fnamemodify(name, ':t'),
-          filetype = vim.bo[bufnr].filetype,
-          bufnr = bufnr,  -- Store bufnr for LSP collection
-          content = content
-        })
+      if name ~= '' and not name:match('Todo%-AI Chat') then
+        table.insert(open_buffers, name)
       end
     end
   end
-  context.other_buffers = other_buffers
+  context.open_buffers = open_buffers
 
   -- Load compact project context
   local ok, context_module = pcall(require, 'todo-ai.context_compact')
@@ -122,15 +107,17 @@ function M.enrich_with_project_context(context)
         context.lsp = lsp_data
       end
 
-      -- Get LSP context for all other open buffers if enabled
+      -- Get LSP diagnostics for other open buffers
       if lsp_config.include_all_buffers ~= false then
         local all_buffers_lsp = {}
-        for _, buf_info in ipairs(context.other_buffers or {}) do
-          if buf_info.bufnr then
-            -- Get simplified LSP data for other buffers (mainly diagnostics)
-            local buf_lsp = lsp_context.get_buffer_diagnostics_summary(buf_info.bufnr)
-            if buf_lsp then
-              all_buffers_lsp[buf_info.filename] = buf_lsp
+        for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+          if bufnr ~= context.bufnr and vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buflisted then
+            local name = vim.api.nvim_buf_get_name(bufnr)
+            if name ~= '' and not name:match('Todo%-AI Chat') then
+              local buf_lsp = lsp_context.get_buffer_diagnostics_summary(bufnr)
+              if buf_lsp then
+                all_buffers_lsp[vim.fn.fnamemodify(name, ':t')] = buf_lsp
+              end
             end
           end
         end

@@ -141,20 +141,4 @@ function M.set(key, value)
 end
 
 -- Load project-specific config if exists
-function M.load_project_config()
-    local project_config_path = vim.fn.getcwd() .. '/.todoai/config.json'
-    if vim.fn.filereadable(project_config_path) == 1 then
-        local file = io.open(project_config_path, 'r')
-        if file then
-            local content = file:read('*all')
-            file:close()
-            local project_config = vim.fn.json_decode(content)
-            if project_config then
-                M.config = vim.tbl_deep_extend('force', M.config, project_config)
-                vim.notify('Loaded project-specific Todo-AI config', vim.log.levels.INFO)
-            end
-        end
-    end
-end
-
 return M
