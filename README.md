@@ -38,7 +38,7 @@ User Input → unified_prompt.process() → Rust Backend (Unix socket)
 | `backend.lua` | Manages Rust backend process via Unix socket |
 | `search_replace.lua` | Applies SEARCH/REPLACE text transformations |
 | `diff.lua` | Visual diff display with accept/reject per change |
-| `chat.lua` | Interactive chat buffer with edit queue |
+| `chat.lua` | Interactive chat buffer |
 | `scanner.lua` | Finds `TODO: @ai` comments in buffers |
 | `visual.lua` | Visual mode selection processing |
 | `lsp_context.lua` | Collects LSP diagnostics for context |
@@ -125,9 +125,6 @@ require('todo-ai').setup({
 | `<leader>tg` | `:TodoAIGenerateContext` | Generate project context |
 | `<leader>td` | `:TodoAISuggestDryTags` | Suggest DRY tags |
 | `<leader>tS` | `:TodoAIScanProject` | Scan entire project |
-| `<leader>ea` | `:TodoAIEditAccept` | Accept current edit in queue |
-| `<leader>er` | `:TodoAIEditReject` | Reject current edit in queue |
-| `<leader>en` | `:TodoAIEditNext` | Next edit in queue |
 
 ### TODO Scanning
 
@@ -163,7 +160,7 @@ todo-ai/
 │   ├── backend.lua           # Rust backend process management
 │   ├── search_replace.lua    # SEARCH/REPLACE text transformation
 │   ├── diff.lua              # Visual diff with DiffAdd/DiffDelete
-│   ├── chat.lua              # Chat buffer & edit queue
+│   ├── chat.lua              # Chat buffer & messaging
 │   ├── scanner.lua           # TODO: @ai detection
 │   ├── visual.lua            # Visual mode processing
 │   ├── config.lua            # Configuration management
@@ -187,25 +184,20 @@ todo-ai/
 └── Makefile
 ```
 
-### Building
+### Make Targets
 
 ```bash
-make build-rust    # Build Rust backend
-make test          # Run Lua tests
-make test-rust     # Run Rust tests
-```
-
-### Running Tests
-
-```bash
-# All tests
-make test
-
-# Single test file
+make build           # Build release Rust backend (default)
+make build-debug     # Build debug Rust backend (faster compile)
+make test            # Run all tests (Lua + Rust)
+make test-lua        # Run Lua/Neovim tests only
+make test-rust       # Run Rust tests only
 make test-single FILE=tests/plenary/some_spec.lua
-
-# In Neovim
-:PlenaryBustedFile %
+make lint            # Find dead Lua code
+make install         # Build and install to Neovim packages dir
+make dev             # Symlink local copy for development
+make clean           # Remove build artifacts
+make help            # Show all targets
 ```
 
 ### Debug Logging
