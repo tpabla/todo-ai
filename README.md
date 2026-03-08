@@ -29,7 +29,7 @@ Neovim + [pi coding agent](https://github.com/mariozechner/pi-coding-agent) via 
 - **[tmux](https://github.com/tmux/tmux)** — Neovim must be running inside tmux
 - **[pi](https://github.com/mariozechner/pi-coding-agent)** — `npm i -g @mariozechner/pi-coding-agent`
 - **[diffview.nvim](https://github.com/sindrets/diffview.nvim)** — for reviewing changes
-- **[todo-comments.nvim](https://github.com/folke/todo-comments.nvim)** — highlights `AGENT:` tags
+- **[todo-comments.nvim](https://github.com/folke/todo-comments.nvim)** *(optional)* — adds telescope search and icons for `AGENT:` tags
 
 See **[INSTALL.md](INSTALL.md)** for detailed setup.
 
@@ -39,18 +39,7 @@ See **[INSTALL.md](INSTALL.md)** for detailed setup.
 -- lazy.nvim
 {
   "tpabla/todo-ai",
-  dependencies = {
-    "sindrets/diffview.nvim",
-    {
-      "folke/todo-comments.nvim",
-      dependencies = "nvim-lua/plenary.nvim",
-      opts = {
-        keywords = {
-          AGENT = { icon = "🤖", color = "hint" },
-        },
-      },
-    },
-  },
+  dependencies = { "sindrets/diffview.nvim" },
   opts = {},
 }
 ```

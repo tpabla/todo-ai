@@ -43,6 +43,10 @@ describe("init", function()
   end)
 
   it("reports no pane alive when no state", function()
+    init.state.tmux_pane = nil
+    -- Remove any leftover pane-id file
+    local pane_file = init._state_dir() .. '/pane-id'
+    os.remove(pane_file)
     assert.is_false(init._is_pane_alive())
   end)
 
