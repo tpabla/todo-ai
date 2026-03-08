@@ -100,8 +100,57 @@ function M._on_stdout(data)
   end
 end
 
--- Dispatch a single JSON event
+-- Split concatenated JSON objects by tracking brace depth
+function M._split_json(str)
+  local objects = {}
+  local depth = 0
+  local start = nil
+  local in_string = false
+  local escape = false
+
+  for i = 1, #str do
+    local c = str:sub(i, i)
+
+    if escape then
+      escape = false
+    elseif c == '\\' and in_string then
+      escape = true
+    elseif c == '"' then
+      in_string = not in_string
+    elseif not in_string then
+      if c == '{' then
+        if depth == 0 then start = i end
+        depth = depth + 1
+      elseif c == '}' then
+        depth = depth - 1
+        if depth == 0 and start then
+          table.insert(objects, str:sub(start, i))
+          start = nil
+        end
+      end
+    end
+  end
+
+  return objects
+end
+
+-- Dispatch a single JSON event (or multiple concatenated objects)
 function M._dispatch(json_str)
+  local logger = require('todo-ai.logger')
+
+  -- Handle concatenated JSON objects: }{  →  split them
+  if json_str:find('}{', 1, true) then
+    local objects = M._split_json(json_str)
+    for _, obj in ipairs(objects) do
+      M._dispatch_one(obj)
+    end
+    return
+  end
+
+  M._dispatch_one(json_str)
+end
+
+function M._dispatch_one(json_str)
   local logger = require('todo-ai.logger')
   local ok, event = pcall(vim.fn.json_decode, json_str)
   if not ok then
