@@ -4,151 +4,191 @@ Branch: `feature/agentic-workflow`
 
 ## Goal
 
-Shift from inline diff accept/reject to a plan-then-edit workflow where:
-1. User talks to the agent in the chat buffer
-2. Agent proposes a **plan** before touching any files
-3. User approves (or adjusts) the plan
-4. Agent edits files on disk using SEARCH/REPLACE
-5. User reviews all changes with **diffview.nvim** (git diff)
-6. User commits when satisfied
+Todo-ai becomes a thin Neovim UI that wraps **pi coding agent** via its RPC protocol. Pi handles all file editing, tool execution, retries, and context management. Todo-ai provides:
 
-Git becomes the undo mechanism. No more per-change accept/reject UI.
+1. Chat buffer in Neovim (`:w` to send)
+2. Neovim-specific context (open buffers, TODOs, LSP diagnostics)
+3. Streaming response display
+4. Diffview integration for reviewing changes
 
-## Current Flow (what changes)
+## Architecture
 
 ```
-chat → LLM → JSON response → inline diff buffer → accept/reject per change
+Neovim (todo-ai)                    pi (RPC subprocess)
+┌──────────────┐                   ┌──────────────────┐
+│ Chat buffer  │──── prompt ──────→│                  │
+│              │←── text_delta ────│  LLM + Tools     │
+│ TODO scanner │                   │  (read, write,   │
+│ LSP context  │                   │   edit, bash)    │
+│ Open buffers │                   │                  │
+└──────────────┘                   └──────────────────┘
+                                          │
+                                    writes files directly
+                                          │
+                                    user runs :DiffviewOpen
 ```
 
-## New Flow
+## What pi gives us for free
 
-```
-chat → LLM → plan (chat mode) → user approves → LLM → SEARCH/REPLACE → write to disk
-                                                                              ↓
-                                                              user runs :DiffviewOpen
-                                                              reviews, commits, or reverts
-```
+- **File editing** — read, write, edit tools (no SEARCH/REPLACE parsing needed)
+- **Streaming** — text_delta events for live response display
+- **Session management** — conversation history, compaction, forking
+- **Multi-provider** — anthropic, openai, google, ollama, etc.
+- **Retries** — auto-retry on rate limits and transient errors
+- **Tool execution** — bash commands, file operations
+- **Planning** — use `--append-system-prompt` or a pi skill to enforce plan-first behavior
 
-## What stays
+## What todo-ai provides
 
-- **Chat buffer** — `:w` to send, same vim-native UX
-- **TODO scanning** — `TODO: @ai` detection, project scan
-- **Project context** — `context_compact`, open buffer paths, LSP diagnostics
-- **Relevant buffer inclusion** — Rust reads files based on query relevance
-- **SEARCH/REPLACE** — still the mechanism for applying changes
-- **Rust backend** — prompt building, LLM calls, response parsing
-- **Multi-provider** — Claude, OpenAI, Ollama, Claude CLI
+- **Chat UI** — vim-native buffer, `:w` to send, markdown rendering
+- **Neovim context** — inject open buffer paths, LSP diagnostics, project context into prompts
+- **TODO scanning** — find `TODO: @ai` comments, feed them as prompts to pi
+- **Diffview shortcut** — `:TodoAIDiff` opens diffview to review pi's file changes
 
-## What changes
+## What gets deleted
 
-### 1. Two-phase responses: Plan → Execute
+| Module | Lines | Reason |
+|--------|-------|--------|
+| `rust/` (entire backend) | ~3000 | Pi handles LLM calls, prompt building, parsing, retries |
+| `diff.lua` | ~870 | Diffview replaces inline diff UI |
+| `search_replace.lua` | ~60 | Pi's edit tool handles file modifications |
+| `unified_prompt.lua` | ~400 | Simplifies to context gathering + pi RPC call |
+| `backend.lua` | ~200 | Replaced by pi RPC client |
 
-The LLM currently decides between `mode: "chat"` and `mode: "changes"`. Add a third mode:
+## What stays (simplified)
 
-```json
-{"mode": "plan", "plan": "1. Add error handling to fetch_data...", "files": ["api.py", "tests/test_api.py"]}
-```
+| Module | Purpose |
+|--------|---------|
+| `chat.lua` | Chat buffer UI, streaming display, `:w` to send |
+| `scanner.lua` | TODO: @ai detection |
+| `context_compact.lua` | Project context generation |
+| `lsp_context.lua` | LSP diagnostics for context |
+| `config.lua` | Plugin configuration |
+| `visual.lua` | Visual mode selection → prompt |
+| `init.lua` | Setup, commands, keymaps |
+| `logger.lua` | Debug logging |
 
-**Flow:**
-- User asks for changes → LLM responds with `mode: "plan"`
-- Plan is displayed in chat buffer
-- User replies "yes" / "go" / "do it" (or adjusts: "skip the tests part") → LLM responds with `mode: "changes"` and the SEARCH/REPLACE blocks
-- If user just wants to chat, LLM still uses `mode: "chat"` as before
+## New module: `pi_client.lua`
 
-**System prompt changes:**
-- When user asks for code changes, ALWAYS plan first
-- Include which files will be touched and what each change does
-- Keep plans concise — bullet list, not essay
-- When user approves, execute with SEARCH/REPLACE
-- If user asks follow-up questions about the plan, stay in chat mode
+Replaces `backend.lua`. Spawns pi in RPC mode and communicates via JSON lines on stdin/stdout.
 
-### 2. Write changes to disk (not inline diff)
+```lua
+local M = {}
 
-After receiving `mode: "changes"`, instead of showing inline diffs:
-1. Apply SEARCH/REPLACE to file contents
-2. Write the modified files to disk
-3. Notify user: "Applied 3 changes to 2 files. Run `:DiffviewOpen` to review."
+function M.start(config)
+  -- Spawn: pi --mode rpc --provider <x> --model <y> --append-system-prompt <context>
+  M.job = vim.fn.jobstart(cmd, {
+    on_stdout = function(_, data) M.on_event(data) end,
+    on_exit = function() M.job = nil end,
+  })
+end
 
-**Revert path:** `git checkout -- .` or reject individual files in diffview.
+function M.prompt(message)
+  -- {"type": "prompt", "message": "..."}
+  M.send({ type = "prompt", message = message })
+end
 
-### 3. Remove inline diff system
+function M.abort()
+  M.send({ type = "abort" })
+end
 
-Delete `diff.lua` and its 800+ lines. The accept/reject/next/prev change navigation, virtual text overlays, and quickfix population are all replaced by diffview.
-
-### 4. Multi-file support
-
-Current SEARCH/REPLACE is single-file. Extend the response schema:
-
-```json
-{
-  "mode": "changes",
-  "changes": [
-    {"file": "src/api.py", "search": "...", "replace": "..."},
-    {"file": "src/api.py", "search": "...", "replace": "..."},
-    {"file": "tests/test_api.py", "search": "...", "replace": "..."}
-  ],
-  "explanation": "Added error handling and tests"
-}
-```
-
-For new files:
-```json
-{"file": "src/utils.py", "search": "", "replace": "def helper():\n    pass\n"}
+function M.on_event(event)
+  -- Route events to chat buffer:
+  -- text_delta → append to chat display
+  -- tool_execution_start → show "Editing file.lua..."
+  -- tool_execution_end → show result
+  -- agent_end → notify "Done. :DiffviewOpen to review."
+end
 ```
 
-Empty `search` = create new file with `replace` as content.
+## Prompt flow
 
-## Implementation Plan
+1. User types in chat buffer, hits `:w`
+2. `chat.lua` gathers Neovim context (open buffers, LSP, project context)
+3. Prepends context to user message
+4. Sends `{"type": "prompt", "message": "<context>\n\n<user message>"}` to pi
+5. Pi streams back events → chat buffer displays them live
+6. Pi calls tools (edit, write) → files change on disk
+7. On `agent_end` → notify user to run `:DiffviewOpen`
 
-### Phase 1: Plan mode
+## TODO scanning flow
 
-1. **Rust `schema.rs`** — add `"plan"` as valid mode, add `plan` and `files` fields
-2. **Rust `prompts/system.md`** — update system prompt: always plan before changing
-3. **Lua `unified_prompt.lua`** — handle `mode: "plan"` responses (display in chat)
-4. **Lua `chat.lua`** — no structural changes, plans are just chat messages
+1. `scanner.lua` finds `TODO: @ai` comments
+2. Each TODO becomes a prompt: "Resolve this TODO in <file>:<line>: <instruction>"
+3. Context (file content, surrounding code, LSP) is prepended
+4. Sent to pi as a normal prompt
+5. Pi edits the files directly
 
-### Phase 2: Write to disk
+## Planning behavior
 
-1. **Lua `unified_prompt.lua`** — on `mode: "changes"`, apply and write to disk instead of calling `diff.show()`
-2. **Lua `search_replace.lua`** — add `apply_to_file(path, changes)` that reads file, applies changes, writes back
-3. **Rust `schema.rs`** — add `file` field to change objects
-4. **Rust `parser.rs`** — parse per-file change blocks
+Use pi's `--append-system-prompt` at startup:
 
-### Phase 3: Remove inline diff
+```
+When the user asks you to make changes, first propose a plan listing which
+files you'll modify and what you'll do in each. Wait for the user to approve
+before making any edits. Keep plans concise — bullet list, not essay.
+```
 
-1. Delete `lua/todo-ai/diff.lua`
-2. Remove diff keymaps from `plugin/todo-ai.vim` (`<leader>ta`, `<leader>tr`)
-3. Remove diff commands (`TodoAIAccept`, `TodoAIReject`)
-4. Add `:TodoAIDiffview` command (just calls `:DiffviewOpen`)
-5. Run `make lint` to catch any remaining references
+Or create a pi skill at `.pi/agent/skills/plan-first/SKILL.md`.
 
-### Phase 4: Clean up
+## Configuration
 
-1. Remove `3 changes max` rule from search_replace_rules — agent can now make as many changes as needed since diffview handles review
-2. Update keybindings table
-3. Update README
+```lua
+require('todo-ai').setup({
+  -- Pi settings
+  pi_provider = 'anthropic',
+  pi_model = 'sonnet',
+  pi_thinking = 'medium',
+  pi_extra_args = {},  -- additional CLI args
 
-## Keybindings (after)
+  -- Context
+  include_open_buffers = true,
+  include_lsp_diagnostics = true,
+  include_project_context = true,
+
+  -- UI
+  chat_window_width = 60,
+  chat_window_position = 'right',
+})
+```
+
+## Keybindings
 
 | Key | Command | Description |
 |-----|---------|-------------|
 | `<leader>tc` | `:TodoAIChat` | Open chat |
-| `<leader>ts` | `:TodoAIScan` | Scan buffer for TODOs |
-| `<leader>tS` | `:TodoAIScanProject` | Scan project for TODOs |
+| `<leader>ts` | `:TodoAIScan` | Scan buffer TODOs → send to pi |
+| `<leader>tS` | `:TodoAIScanProject` | Scan project TODOs |
 | `<leader>td` | `:DiffviewOpen` | Review changes |
-| `<leader>tg` | `:TodoAIGenerateContext` | Generate project context |
+| `<leader>ti` | `:TodoAIVisual` | Process visual selection |
+| `<leader>tx` | `:TodoAIAbort` | Abort current pi operation |
 
 ## Dependencies
 
-- [diffview.nvim](https://github.com/sindrets/diffview.nvim) — listed as optional dependency, error if user tries `:TodoAIDiffview` without it
+- [pi coding agent](https://github.com/mariozechner/pi-coding-agent) — required, must be in PATH
+- [diffview.nvim](https://github.com/sindrets/diffview.nvim) — optional, for reviewing changes
+- [plenary.nvim](https://github.com/nvim-lua/plenary.nvim) — for tests
 
-## Open Questions
+## Implementation phases
 
-- Should the agent auto-stage changes or leave everything unstaged?
-  - **Lean: leave unstaged.** User controls what goes in each commit.
-- Should there be a way to undo the last set of changes without git?
-  - **Lean: no.** Git is the undo. Keep it simple.
-- Should plans require explicit approval or should there be a "just do it" mode?
-  - **Lean: always plan.** User can configure `auto_approve = true` later if they want to skip.
-- What about TODO scanning — should it also plan first?
-  - **Lean: yes.** Scan finds TODOs → agent plans how to resolve them → user approves → changes written.
+### Phase 1: Pi RPC client
+- New `pi_client.lua` — spawn pi, send prompts, handle events
+- Wire chat buffer `:w` → pi prompt
+- Stream responses back to chat buffer display
+- Show tool execution status (editing file X, running command Y)
+
+### Phase 2: Context injection
+- Gather open buffer paths, LSP diagnostics, project context
+- Prepend to user message before sending to pi
+- Plan-first system prompt via `--append-system-prompt`
+
+### Phase 3: Delete old backend
+- Remove `rust/` entirely
+- Remove `diff.lua`, `search_replace.lua`, `backend.lua`, `unified_prompt.lua`
+- Remove `build-rust` from Makefile
+- Update tests, README
+
+### Phase 4: TODO scanning via pi
+- Scan finds TODOs → formats as prompts → sends to pi
+- Pi edits files directly
+- User reviews with diffview
