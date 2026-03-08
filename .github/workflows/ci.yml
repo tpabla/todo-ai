@@ -7,30 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  rust:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Cache cargo
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          rust/target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
-
-    - name: Test Rust
-      run: make test-rust
-
-    - name: Build release
-      run: make build-release
-
-  lua:
+  test:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -46,5 +23,5 @@ jobs:
         mkdir -p ~/.local/share/nvim/site/pack/test/start
         git clone --depth 1 https://github.com/nvim-lua/plenary.nvim ~/.local/share/nvim/site/pack/test/start/plenary.nvim
 
-    - name: Test Lua
+    - name: Test
       run: make test-lua

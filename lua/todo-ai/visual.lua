@@ -3,21 +3,16 @@ local M = {}
 -- Create a minimal floating window for input
 function M.create_input_window(callback)
   local width = 50
-  local height = 3  -- 3 lines for padding
+  local height = 3
 
-  -- Calculate center position
   local row = math.floor((vim.o.lines - height) / 2)
   local col = math.floor((vim.o.columns - width) / 2)
 
-  -- Create buffer
   local buf = vim.api.nvim_create_buf(false, true)
-
-  -- Set buffer options
-  vim.bo[buf].buftype = ''  -- Use normal buffer type for better control
+  vim.bo[buf].buftype = ''
   vim.bo[buf].bufhidden = 'wipe'
   vim.bo[buf].modifiable = true
 
-  -- Create minimal window
   local win = vim.api.nvim_open_win(buf, true, {
     relative = 'editor',
     width = width,
@@ -30,103 +25,55 @@ function M.create_input_window(callback)
     title_pos = 'center'
   })
 
-  -- Set minimal highlight groups
-  vim.api.nvim_set_hl(0, 'TodoAIFloatBorder', { fg = '#ff00ff' })
-  vim.api.nvim_set_hl(0, 'TodoAIFloatTitle', { fg = '#00ff9f', bold = true })
+  vim.cmd('startinsert')
 
-  -- Apply highlights to window
-  vim.api.nvim_win_set_option(win, 'winhighlight', 'FloatBorder:TodoAIFloatBorder,NormalFloat:Normal')
-
-  -- Set window options
-  vim.wo[win].wrap = false
-  vim.wo[win].cursorline = false
-
-  -- Add lines with padding - middle line has the prompt
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-    "",
-    "> ",
-    ""
-  })
-
-  -- Position cursor after prompt on middle line
-  vim.api.nvim_win_set_cursor(win, {2, 2})
-
-  -- Set up keymaps
+  -- Submit on Enter
   vim.api.nvim_buf_set_keymap(buf, 'i', '<CR>', '', {
     noremap = true,
     callback = function()
       local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-      local instruction = lines[2]:sub(3) -- Remove "> " prompt from middle line
-
-      -- Close window
+      local input = vim.trim(table.concat(lines, ' '))
       vim.api.nvim_win_close(win, true)
-
-      -- Call callback with instruction
-      if instruction and instruction ~= '' then
-        callback(instruction)
+      vim.cmd('stopinsert')
+      if input ~= '' then
+        callback(input)
       end
     end
   })
 
+  -- Cancel on Escape
   vim.api.nvim_buf_set_keymap(buf, 'i', '<Esc>', '', {
     noremap = true,
     callback = function()
       vim.api.nvim_win_close(win, true)
+      vim.cmd('stopinsert')
     end
   })
-
-  vim.api.nvim_buf_set_keymap(buf, 'n', '<Esc>', '', {
-    noremap = true,
-    callback = function()
-      vim.api.nvim_win_close(win, true)
-    end
-  })
-
-  vim.api.nvim_buf_set_keymap(buf, 'n', 'q', '', {
-    noremap = true,
-    callback = function()
-      vim.api.nvim_win_close(win, true)
-    end
-  })
-
-  -- Start insert mode in the floating window
-  vim.cmd('startinsert!')
 end
 
--- Get visual selection
 function M.get_visual_selection()
-  -- Get selection marks
   local start_pos = vim.fn.getpos("'<")
   local end_pos = vim.fn.getpos("'>")
-
   local start_line = start_pos[2]
   local start_col = start_pos[3]
   local end_line = end_pos[2]
   local end_col = end_pos[3]
 
-  -- Get the lines
   local lines = vim.api.nvim_buf_get_lines(0, start_line - 1, end_line, false)
+  if #lines == 0 then return nil end
 
-  if #lines == 0 then
-    return nil, nil, nil
-  end
-
-  -- Handle single line selection
+  -- Trim to selection columns
   if #lines == 1 then
     lines[1] = lines[1]:sub(start_col, end_col)
   else
-    -- First line: from start_col to end
     lines[1] = lines[1]:sub(start_col)
-    -- Last line: from beginning to end_col
     lines[#lines] = lines[#lines]:sub(1, end_col)
   end
 
   return lines, start_line, end_line
 end
 
--- Process visual selection
 function M.process_visual_selection()
-  -- Get the selected text
   local selected_lines, start_line, end_line = M.get_visual_selection()
 
   if not selected_lines then
@@ -134,26 +81,45 @@ function M.process_visual_selection()
     return
   end
 
-  -- Store the original buffer before opening input window
   local original_bufnr = vim.api.nvim_get_current_buf()
 
-  -- Create floating input window
   M.create_input_window(function(instruction)
-    -- Use unified prompt system
-    local unified_prompt = require('todo-ai.unified_prompt')
+    local pi = require('todo-ai.pi_client')
+    local ctx = require('todo-ai.context')
+    local chat = require('todo-ai.chat')
+    local init = require('todo-ai.init')
+
     local selected_text = table.concat(selected_lines, '\n')
+    local file_path = vim.api.nvim_buf_get_name(original_bufnr)
 
-    -- Ensure we're in normal mode for proper render-markdown display
     vim.cmd('stopinsert')
+    init.open_chat()
 
-    -- Process through unified system
-    unified_prompt.process({
-      instruction = instruction,
+    local filename = vim.fn.fnamemodify(file_path, ':t')
+    chat.add_message('user', string.format(
+      "**Task:** %s\n\n**File:** %s (lines %d-%d)\n\n**Selected text:**\n```\n%s\n```",
+      instruction, filename, start_line, end_line, selected_text
+    ))
+
+    local context_text = ctx.build({
+      bufnr = original_bufnr,
+      file_path = file_path,
       selected_text = selected_text,
       start_line = start_line,
       end_line = end_line,
-      bufnr = original_bufnr
     })
+
+    local message = string.format(
+      "In file %s, regarding the selected code at lines %d-%d:\n```\n%s\n```\n\n%s",
+      file_path, start_line, end_line, selected_text, instruction
+    )
+
+    if context_text then
+      message = "<neovim_context>\n" .. context_text .. "\n</neovim_context>\n\n" .. message
+    end
+
+    chat.show_thinking()
+    pi.prompt(message)
   end)
 end
 

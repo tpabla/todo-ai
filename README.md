@@ -1,105 +1,74 @@
 # 🤖 TodoAI - AI-Powered Code Assistant for Neovim
 
-A Neovim plugin that brings AI code assistance through TODO comments, interactive chat, and visual selection — using aider-style SEARCH/REPLACE blocks for precise code changes.
+A Neovim plugin that wraps the [pi coding agent](https://github.com/mariozechner/pi-coding-agent) with a vim-native chat UI, TODO scanning, and Neovim context injection. Pi handles all file editing — you review changes with [diffview.nvim](https://github.com/sindrets/diffview.nvim).
+
+## How it works
+
+```
+Neovim (todo-ai)                    pi (RPC subprocess)
+┌──────────────┐                   ┌──────────────────┐
+│ Chat buffer  │──── prompt ──────→│                  │
+│              │←── streaming ─────│  LLM + Tools     │
+│ TODO scanner │                   │  (read, write,   │
+│ Open buffers │                   │   edit, bash)    │
+│ LSP diags    │                   │                  │
+└──────────────┘                   └──────────────────┘
+                                          │
+                                    edits files on disk
+                                          │
+                                    :DiffviewOpen to review
+```
+
+**Todo-ai gathers context from Neovim** (open buffers, LSP diagnostics, project structure, TODO comments) and sends it to pi. **Pi does the actual work** — reading files, making edits, running commands. You review changes with diffview and commit when satisfied.
 
 ## ✨ Features
 
-- **📝 TODO Scanning**: Detects `TODO: @ai` comments and resolves them with AI
-- **💬 Interactive Chat**: Vim-native chat buffer (`:w` to send messages)
-- **👁️ Visual Mode**: Select code, get AI-powered refactoring/explanation
-- **🎨 Visual Diffs**: Inline diff display using native Neovim `DiffAdd`/`DiffDelete` highlighting with per-change accept/reject
-- **🔍 Context-Aware**: Includes LSP diagnostics, project context, and file content
-- **📊 Multi-Provider**: Claude, OpenAI, Ollama, and Claude CLI
-- **⚡ Rust Backend**: Async Rust process communicates via Unix socket for non-blocking LLM calls
-
-## 🏗️ Architecture
-
-```
-User Input → unified_prompt.process() → Rust Backend (Unix socket)
-                                              ↓
-                                        LLM Provider (Claude/OpenAI/Ollama)
-                                              ↓
-                                        JSON Response {mode: "chat"|"changes"}
-                                              ↓
-                                        SEARCH/REPLACE blocks → Visual Diff
-```
-
-**Key design decisions:**
-- **Single entry point**: All requests flow through `unified_prompt.process()`
-- **Aider-style SEARCH/REPLACE**: Exact text matching for code changes — no line numbers or complex diffs
-- **Fail fast**: No silent failures, no fallback behavior, no guessing
-- **Native Neovim diff**: Uses `DiffAdd`/`DiffDelete` highlighting for visual diffs
-
-### Core Components
-
-| Component | Description |
-|-----------|-------------|
-| `unified_prompt.lua` | Single entry point for all AI requests |
-| `backend.lua` | Manages Rust backend process via Unix socket |
-| `search_replace.lua` | Applies SEARCH/REPLACE text transformations |
-| `diff.lua` | Visual diff display with accept/reject per change |
-| `chat.lua` | Interactive chat buffer |
-| `scanner.lua` | Finds `TODO: @ai` comments in buffers |
-| `visual.lua` | Visual mode selection processing |
-| `lsp_context.lua` | Collects LSP diagnostics for context |
-| `context_compact.lua` | Project context generation |
-| **Rust backend** | Async LLM communication, prompt building, response parsing |
+- **💬 Chat UI**: Vim-native buffer — type, `:w` to send, streaming responses
+- **📝 TODO Scanning**: Detects `TODO: @ai` comments and sends them to pi for resolution
+- **🔍 Context Injection**: Open buffer paths, LSP diagnostics, and project context included automatically
+- **👁️ Visual Mode**: Select code, describe what you want, pi handles it
+- **⚡ Streaming**: Live response display as pi generates output
+- **🔧 Tool Feedback**: See what pi is doing — editing files, running commands, reading code
 
 ## 📦 Installation
+
+Requires [pi coding agent](https://github.com/mariozechner/pi-coding-agent) (`npm install -g @mariozechner/pi-coding-agent`).
 
 ### Using [lazy.nvim](https://github.com/folke/lazy.nvim)
 
 ```lua
 {
   "tpabla/todo-ai",
-  build = "make build-rust",
-  dependencies = { "nvim-lua/plenary.nvim" },
+  dependencies = {
+    "nvim-lua/plenary.nvim",
+    "sindrets/diffview.nvim",  -- optional, for reviewing changes
+  },
   config = function()
     require("todo-ai").setup({
-      provider = "claude",
-      model = "claude-opus-4-6",
+      pi_provider = "anthropic",
+      pi_model = "sonnet",
     })
   end,
 }
 ```
 
-### Manual
-
-```bash
-git clone https://github.com/tpabla/todo-ai.git \
-  ~/.local/share/nvim/site/pack/plugins/start/todo-ai
-cd ~/.local/share/nvim/site/pack/plugins/start/todo-ai
-make build-rust
-```
-
 ## 🔧 Configuration
-
-### API Keys
-
-```bash
-# Claude
-export ANTHROPIC_API_KEY="sk-ant-..."
-
-# OpenAI
-export OPENAI_API_KEY="sk-..."
-
-# Ollama (no key needed)
-ollama serve
-```
-
-### Setup
 
 ```lua
 require('todo-ai').setup({
-  provider = 'claude',           -- 'claude', 'openai', 'ollama'
-  model = 'claude-opus-4-6',
-  temperature = 0.7,
-  max_tokens = 8192,
+  -- Pi settings (all optional — uses pi defaults if omitted)
+  pi_provider = 'anthropic',     -- any pi provider: anthropic, openai, google, ollama, etc.
+  pi_model = 'sonnet',           -- model name or pattern
+  pi_thinking = 'medium',        -- off, minimal, low, medium, high
+  pi_system_prompt = nil,        -- appended to pi's system prompt
+  pi_extra_args = {},             -- additional CLI args for pi
+
+  -- Plugin behavior
+  auto_scan = false,              -- auto-scan for TODOs on save
 
   -- UI
-  diff_style = 'inline',
   chat_window_width = 60,
-  chat_window_position = 'right',
+  chat_window_position = 'right', -- right, left, bottom
 
   -- @ai tag highlighting
   ai_highlight = {
@@ -117,14 +86,20 @@ require('todo-ai').setup({
 
 | Key | Command | Description |
 |-----|---------|-------------|
-| `<leader>ts` | `:TodoAIScan` | Scan buffer for `TODO: @ai` comments |
-| `<leader>tc` | `:TodoAIChat` | Open interactive chat |
-| `<leader>ta` | `:TodoAIAccept` | Accept current change |
-| `<leader>tr` | `:TodoAIReject` | Reject current change |
+| `<leader>tc` | `:TodoAIChat` | Open chat |
+| `<leader>ts` | `:TodoAIScan` | Scan buffer for `TODO: @ai` |
+| `<leader>tS` | `:TodoAIScanProject` | Scan project for TODOs |
 | `<leader>ti` | `:TodoAIVisual` | Process visual selection |
+| `<leader>tx` | `:TodoAIAbort` | Abort current pi operation |
 | `<leader>tg` | `:TodoAIGenerateContext` | Generate project context |
-| `<leader>td` | `:TodoAISuggestDryTags` | Suggest DRY tags |
-| `<leader>tS` | `:TodoAIScanProject` | Scan entire project |
+
+### Chat
+
+1. `<leader>tc` opens the chat buffer
+2. Type your message
+3. `:w` or `Enter` sends it
+4. Pi streams its response and edits files directly
+5. `:DiffviewOpen` to review changes, `git checkout -- .` to revert
 
 ### TODO Scanning
 
@@ -134,19 +109,11 @@ def fetch_data(url):
     return requests.get(url).json()
 ```
 
-Press `<leader>ts` — the AI reads the TODO, generates a SEARCH/REPLACE block, and shows an inline diff you can accept or reject.
-
-### Interactive Chat
-
-1. `<leader>tc` opens the chat buffer
-2. Type your message like normal vim editing
-3. `:w` sends the message
-4. AI responds with either chat text or code changes
-5. Code changes appear as inline diffs in the target buffer
+`<leader>ts` finds the TODO, sends it to pi with file context. Pi edits the file directly.
 
 ### Visual Mode
 
-Select code → `<leader>ti` → type instruction in floating window → AI processes selection.
+Select code → `<leader>ti` → type instruction → pi processes it.
 
 ## 🛠️ Development
 
@@ -155,56 +122,35 @@ Select code → `<leader>ti` → type instruction in floating window → AI proc
 ```
 todo-ai/
 ├── lua/todo-ai/
-│   ├── init.lua              # Entry point & command registration
-│   ├── unified_prompt.lua    # Single entry point for all AI requests
-│   ├── backend.lua           # Rust backend process management
-│   ├── search_replace.lua    # SEARCH/REPLACE text transformation
-│   ├── diff.lua              # Visual diff with DiffAdd/DiffDelete
-│   ├── chat.lua              # Chat buffer & messaging
+│   ├── init.lua              # Setup, commands, TODO processing
+│   ├── pi_client.lua         # Pi RPC client (spawn, send, receive)
+│   ├── chat.lua              # Chat buffer UI with streaming
+│   ├── context.lua           # Neovim context gathering
 │   ├── scanner.lua           # TODO: @ai detection
 │   ├── visual.lua            # Visual mode processing
-│   ├── config.lua            # Configuration management
-│   ├── lsp_context.lua       # LSP diagnostics collection
+│   ├── config.lua            # Configuration
 │   ├── context_compact.lua   # Project context generation
-│   ├── dry_tagger.lua        # DRY tag suggestions
 │   ├── integrations.lua      # Optional plugin integrations
-│   ├── logger.lua            # Debug logging
-│   └── dependencies.lua      # Dependency checking
-├── rust/
-│   └── src/
-│       ├── main.rs           # Unix socket server
-│       ├── rpc.rs            # JSON-RPC handler
-│       ├── providers/        # Claude, OpenAI, Ollama, Claude CLI
-│       ├── prompt.rs         # Prompt building
-│       ├── parser.rs         # Response parsing
-│       ├── schema.rs         # JSON schema validation
-│       └── ...
+│   ├── dry_tagger.lua        # DRY tag suggestions
+│   └── logger.lua            # Debug logging
 ├── plugin/todo-ai.vim        # Vim commands & keymaps
 ├── tests/                    # Plenary.nvim tests
+├── scripts/find_dead_code.sh # Dead code detection
 └── Makefile
 ```
 
 ### Make Targets
 
 ```bash
-make build           # Build release Rust backend (default)
-make build-debug     # Build debug Rust backend (faster compile)
-make test            # Run all tests (Lua + Rust)
-make test-lua        # Run Lua/Neovim tests only
-make test-rust       # Run Rust tests only
+make test            # Run all tests
 make test-single FILE=tests/plenary/some_spec.lua
 make lint            # Find dead Lua code
-make install         # Build and install to Neovim packages dir
-make dev             # Symlink local copy for development
-make clean           # Remove build artifacts
+make install         # Install to Neovim packages dir
+make dev             # Symlink for development
 make help            # Show all targets
 ```
 
 ### Debug Logging
-
-```lua
-require('todo-ai').setup({ log_level = 'DEBUG' })
-```
 
 ```vim
 :TodoAILogs
@@ -212,12 +158,17 @@ require('todo-ai').setup({ log_level = 'DEBUG' })
 tail -f /tmp/todo-ai.log
 ```
 
+## Dependencies
+
+- **Required**: [pi coding agent](https://github.com/mariozechner/pi-coding-agent)
+- **Required**: [plenary.nvim](https://github.com/nvim-lua/plenary.nvim) (for tests)
+- **Optional**: [diffview.nvim](https://github.com/sindrets/diffview.nvim) (for reviewing changes)
+- **Optional**: [render-markdown.nvim](https://github.com/MeanderingProgrammer/markdown.nvim) (chat formatting)
+
 ## 📄 License
 
 MIT
 
 ## 🙏 Credits
 
-**Inspired by:** [aider](https://github.com/paul-gauthier/aider) (SEARCH/REPLACE approach), [codecompanion.nvim](https://github.com/olimorris/codecompanion.nvim)
-
-**Built with:** [Neovim](https://neovim.io/), [Plenary.nvim](https://github.com/nvim-lua/plenary.nvim), [Claude](https://anthropic.com), [OpenAI](https://openai.com), [Ollama](https://ollama.ai)
+**Built on**: [pi coding agent](https://github.com/mariozechner/pi-coding-agent), [Neovim](https://neovim.io/), [Plenary.nvim](https://github.com/nvim-lua/plenary.nvim)

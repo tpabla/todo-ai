@@ -1,27 +1,13 @@
-.PHONY: build build-debug build-release test test-lua test-rust test-single \
-       test-watch clean install dev lint help
-
-# --- Build ---
-
-build: build-release ## Build release binary (default)
-
-build-release: ## Build optimized Rust backend
-	cd rust && cargo build --release
-
-build-debug: ## Build debug Rust backend (faster compile)
-	cd rust && cargo build
+.PHONY: test test-lua test-single test-watch clean install dev lint help
 
 # --- Test ---
 
-test: test-lua test-rust ## Run all tests
+test: test-lua ## Run all tests
 
 test-lua: ## Run Lua/Neovim tests
 	@echo "Running Lua tests..."
 	@nvim --headless -u tests/minimal_init.lua \
 		-c 'PlenaryBustedDirectory tests/plenary/ {minimal_init="tests/minimal_init.lua", sequential=true}'
-
-test-rust: ## Run Rust tests
-	cd rust && cargo test
 
 test-single: ## Run single test file (FILE=tests/plenary/xxx_spec.lua)
 	@test -z "$(FILE)" && echo "Usage: make test-single FILE=tests/plenary/xxx_spec.lua" && exit 1 || true
@@ -29,7 +15,7 @@ test-single: ## Run single test file (FILE=tests/plenary/xxx_spec.lua)
 	@nvim --headless -u tests/minimal_init.lua \
 		-c "PlenaryBustedFile $(FILE)"
 
-test-watch: ## Watch for changes and re-run Lua tests
+test-watch: ## Watch for changes and re-run tests
 	@which fswatch > /dev/null || (echo "Install fswatch: brew install fswatch" && exit 1)
 	@while true; do \
 		clear; \
@@ -41,10 +27,9 @@ test-watch: ## Watch for changes and re-run Lua tests
 
 # --- Install ---
 
-install: build-release ## Build and install to Neovim packages dir
+install: ## Install to Neovim packages dir
 	@mkdir -p ~/.local/share/nvim/site/pack/plugins/start/todo-ai
 	@rsync -a --delete \
-		--exclude rust/target \
 		--exclude .git \
 		--exclude .todoai \
 		. ~/.local/share/nvim/site/pack/plugins/start/todo-ai/
@@ -63,8 +48,7 @@ lint: ## Find dead code and other issues
 # --- Clean ---
 
 clean: ## Remove build artifacts
-	cd rust && cargo clean
-	@rm -f /tmp/todo-ai-*.sock
+	@rm -f /tmp/todo-ai-*.sock /tmp/todo-ai.log
 
 # --- Help ---
 
