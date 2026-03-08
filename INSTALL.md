@@ -114,6 +114,7 @@ require("todo-ai").setup({
 |---------|---------|-------------|
 | `<leader>tc` | `:TodoAI` | Open pi in a tmux pane (reuses existing) |
 | `<leader>tf` | `:TodoAIFocus` | Switch tmux focus to pi's pane |
+| `<leader>ts` | `:TodoAIScan` | Find `AGENT:` comments, send to pi |
 | `<leader>ti` | `:TodoAIVisual` | Send visual selection to pi |
 
 Override:
@@ -125,22 +126,22 @@ vim.keymap.set("v", "<leader>ai", ":TodoAIVisual<CR>")
 
 ## Using in your projects
 
-### TODO scanning
+### AGENT scanning
 
-Add `TODO: @ai` comments in any language:
+Add `AGENT:` comments in any language:
 
 ```python
-# TODO: @ai add retry logic with exponential backoff
+# AGENT: add retry logic with exponential backoff
 def fetch(url):
     return requests.get(url).json()
 ```
 
 ```typescript
-// TODO: @ai extract this into a reusable hook
+// AGENT: extract this into a reusable hook
 function useAuth() { ... }
 ```
 
-In pi's pane, type `/scan`. Pi greps for all `TODO: @ai` comments and resolves them.
+Press `<leader>ts` or run `:TodoAIScan`. Pi finds all `AGENT:` comments and resolves them. Also available as `/scan` in pi's pane.
 
 ### Project context
 

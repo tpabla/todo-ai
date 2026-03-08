@@ -19,6 +19,7 @@ export default function (pi: ExtensionAPI) {
   if (!nvim) return;
 
   const promptFile = process.env.TODO_AI_PROMPT;
+  const tag = process.env.TODO_AI_TAG || "AGENT";
 
   function nvimExec(luaCode: string): void {
     const escaped = luaCode.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -58,9 +59,16 @@ export default function (pi: ExtensionAPI) {
     const poll = setInterval(() => {
       if (!existsSync(promptFile)) return;
       try {
-        const text = readFileSync(promptFile, "utf-8");
+        const text = readFileSync(promptFile, "utf-8").trim();
         unlinkSync(promptFile);
-        if (text.trim()) {
+        if (text === "__SCAN__") {
+          const output = grepTag(tag);
+          if (output) {
+            pi.sendUserMessage(
+              `Resolve these ${tag}: comments:\n\n${output}`
+            );
+          }
+        } else if (text) {
           pi.sendUserMessage(text);
         }
       } catch {}
@@ -156,17 +164,17 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // /scan — find TODO: @ai comments and resolve them
+  // /scan — find AGENT: comments and resolve them
   pi.registerCommand("scan", {
-    description: "Find TODO: @ai comments in the project and resolve them",
+    description: `Find ${tag}: comments in the project and resolve them`,
     handler: async (args, ctx) => {
-      const output = grepTodos();
+      const output = grepTag(tag);
       if (output) {
         pi.sendUserMessage(
-          `Resolve these TODO: @ai comments:\n\n${output}`
+          `Resolve these ${tag}: comments:\n\n${output}`
         );
       } else {
-        ctx.ui.notify("No TODO: @ai comments found", "info");
+        ctx.ui.notify(`No ${tag}: comments found`, "info");
       }
     },
   });
@@ -177,9 +185,10 @@ export default function (pi: ExtensionAPI) {
 }
 
 // Prefer rg (respects .gitignore), fall back to grep
-function grepTodos(): string {
+function grepTag(tag: string): string {
+  const pattern = `${tag}:`;
   try {
-    return execFileSync("rg", ["-n", "TODO:.*@ai", "."], {
+    return execFileSync("rg", ["-n", pattern, "."], {
       timeout: 10000,
       encoding: "utf-8",
     }).trim();
@@ -189,13 +198,7 @@ function grepTodos(): string {
   try {
     return execFileSync(
       "grep",
-      [
-        "-rn",
-        "TODO:.*@ai",
-        ".",
-        "--exclude-dir=node_modules",
-        "--exclude-dir=.git",
-      ],
+      ["-rn", pattern, ".", "--exclude-dir=node_modules", "--exclude-dir=.git"],
       { timeout: 10000, encoding: "utf-8" }
     ).trim();
   } catch {

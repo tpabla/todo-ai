@@ -31,6 +31,7 @@ The Neovim plugin is ~50 lines of Lua. All intelligence lives in pi and its [ext
 - **[tmux](https://github.com/tmux/tmux)** — Neovim must be running inside tmux
 - **[pi](https://github.com/mariozechner/pi-coding-agent)** — `npm i -g @mariozechner/pi-coding-agent`
 - **[diffview.nvim](https://github.com/sindrets/diffview.nvim)** — for reviewing changes
+- **[todo-comments.nvim](https://github.com/folke/todo-comments.nvim)** — highlights `AGENT:` tags
 
 See **[INSTALL.md](INSTALL.md)** for detailed setup.
 
@@ -40,10 +41,19 @@ See **[INSTALL.md](INSTALL.md)** for detailed setup.
 -- lazy.nvim
 {
   "tpabla/todo-ai",
-  dependencies = { "sindrets/diffview.nvim" },
-  config = function()
-    require("todo-ai").setup()
-  end,
+  dependencies = {
+    "sindrets/diffview.nvim",
+    {
+      "folke/todo-comments.nvim",
+      dependencies = "nvim-lua/plenary.nvim",
+      opts = {
+        keywords = {
+          AGENT = { icon = "🤖", color = "hint" },
+        },
+      },
+    },
+  },
+  opts = {},
 }
 ```
 
@@ -53,6 +63,7 @@ See **[INSTALL.md](INSTALL.md)** for detailed setup.
 |-----|---------|-------------|
 | `<leader>tc` | `:TodoAI` | Open pi in a tmux pane (or reuse existing) |
 | `<leader>tf` | `:TodoAIFocus` | Switch tmux focus to pi's pane |
+| `<leader>ts` | `:TodoAIScan` | Find `AGENT:` comments, send to pi to resolve |
 | `<leader>ti` | `:TodoAIVisual` | Send visual selection to pi |
 
 ### Workflow
@@ -72,15 +83,15 @@ Open files, navigate code, trigger LSP between prompts — the extension queries
 
 Select code → `<leader>ti` → type instruction → pi processes it.
 
-### TODO scanning
+### AGENT scanning
 
 ```python
-# TODO: @ai add input validation
+# AGENT: add input validation
 def process(data):
     return data.upper()
 ```
 
-In pi's pane, type `/scan` — finds all `TODO: @ai` comments and resolves them.
+`<leader>ts` or `:TodoAIScan` — finds all `AGENT:` comments across the project and sends them to pi for resolution. Also available as `/scan` in pi's pane.
 
 ### Sessions
 

@@ -3,6 +3,7 @@ local M = {}
 M.defaults = {
   pi_extra_args = {},
   pi_width = 80,
+  tag = 'AGENT',
 }
 
 M.config = {}

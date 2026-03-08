@@ -74,8 +74,9 @@ function M.open_pi(initial_prompt)
   local socket = vim.v.servername
   local width = config.get('pi_width') or 80
 
-  -- env NVIM=<socket> TODO_AI_PROMPT=<file> pi [args...]
-  local parts = { 'env', 'NVIM=' .. socket, 'TODO_AI_PROMPT=' .. M._prompt_file() }
+  -- env NVIM=<socket> TODO_AI_PROMPT=<file> TODO_AI_TAG=<tag> pi [args...]
+  local tag = config.get('tag')
+  local parts = { 'env', 'NVIM=' .. socket, 'TODO_AI_PROMPT=' .. M._prompt_file(), 'TODO_AI_TAG=' .. tag }
   for _, arg in ipairs(cmd) do
     table.insert(parts, arg)
   end
@@ -100,6 +101,20 @@ function M.send_prompt(text)
   local f = io.open(staging, 'w')
   if not f then error('Failed to write ' .. staging) end
   f:write(text)
+  f:close()
+  os.rename(staging, tmpfile)
+end
+
+function M.scan()
+  if not M._is_pane_alive() then
+    M.open_pi()
+  end
+  -- Write scan command — extension recognizes this sentinel
+  local tmpfile = M._prompt_file()
+  local staging = tmpfile .. '.tmp'
+  local f = io.open(staging, 'w')
+  if not f then error('Failed to write ' .. staging) end
+  f:write('__SCAN__')
   f:close()
   os.rename(staging, tmpfile)
 end
