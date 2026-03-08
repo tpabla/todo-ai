@@ -1,10 +1,3 @@
-// tmux panes divide —
-// neovim and pi converse,
-// diffs bloom in silence
-
-
-
-
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { createHash } from "node:crypto";
