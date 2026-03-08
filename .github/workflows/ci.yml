@@ -32,10 +32,6 @@ jobs:
 
   lua:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        neovim-version: ['stable', 'nightly']
-
     steps:
     - uses: actions/checkout@v4
 
@@ -43,7 +39,7 @@ jobs:
       uses: rhysd/action-setup-vim@v1
       with:
         neovim: true
-        version: ${{ matrix.neovim-version }}
+        version: stable
 
     - name: Install Plenary.nvim
       run: |
