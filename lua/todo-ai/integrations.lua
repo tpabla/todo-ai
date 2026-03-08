@@ -140,25 +140,4 @@ end
 
 ---Check if todo-comments integration is available
 ---@return boolean
-function M.has_todo_comments()
-  return pcall(require, 'todo-comments')
-end
-
----Get info about available integrations
----@return table
-function M.get_integration_info()
-  return {
-    todo_comments = {
-      available = M.has_todo_comments(),
-      description = "Syntax highlighting for DRY tags",
-      setup_function = M.setup_todo_comments,
-    },
-    render_markdown = {
-      available = pcall(require, 'render-markdown'),
-      description = "Enhanced markdown rendering in chat",
-      setup_function = M.setup_render_markdown,
-    }
-  }
-end
-
 return M

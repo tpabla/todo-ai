@@ -93,15 +93,6 @@ function M.extract_multiline_todo(lines, start_line, initial_instruction)
   return full_instruction:gsub('%s+', ' ')  -- Normalize whitespace
 end
 
-function M.find_todo_at_cursor()
-  local bufnr = vim.api.nvim_get_current_buf()
-  local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local line = lines[cursor_line]
-
-  return M.parse_line(line, cursor_line, lines)
-end
-
 -- Scan entire project for TODOs
 function M.scan_project()
   local todos_by_file = {}

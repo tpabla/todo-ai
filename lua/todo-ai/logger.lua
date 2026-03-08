@@ -30,21 +30,23 @@ local function write_log(level, context, data)
     return
   end
 
-  local timestamp = os.date('%Y-%m-%d %H:%M:%S')
-  local message = string.format('[%s] %s: %s', level, context, data or '')
-
+  local data_str = tostring(data or '')
   if type(data) == 'table' then
     local ok, json = pcall(vim.fn.json_encode, data)
-    if ok then
-      message = string.format('[%s] %s: %s', level, context, json)
-    else
-      message = string.format('[%s] %s: %s', level, context, vim.inspect(data))
-    end
+    data_str = ok and json or vim.inspect(data)
   end
 
-  local entry = timestamp .. ' ' .. message
+  -- Forward to Rust backend if available
+  local backend = package.loaded['todo-ai.backend']
+  if backend and backend.is_available() then
+    pcall(backend.notify, 'log', { level = level, context = context, data = data_str })
+    return
+  end
 
-  -- Write to file (non-blocking)
+  -- Fallback: write to file directly
+  local timestamp = os.date('%Y-%m-%d %H:%M:%S')
+  local entry = string.format('%s [%s] %s: %s', timestamp, level, context, data_str)
+
   vim.schedule(function()
     local file = io.open(LOG_FILE, 'a')
     if file then

@@ -1,520 +1,223 @@
 # 🤖 TodoAI - AI-Powered Code Assistant for Neovim
 
-A sophisticated Neovim plugin that brings AI assistance directly to your editor through TODO comments, interactive chat, and intelligent code understanding.
+A Neovim plugin that brings AI code assistance through TODO comments, interactive chat, and visual selection — using aider-style SEARCH/REPLACE blocks for precise code changes.
 
 ## ✨ Features
 
-- **📝 Smart TODO Resolution**: Auto-detects and resolves TODO comments with AI
-- **💬 Interactive Chat**: Vim-native chat interface (`:w` to send messages)
-- **🔍 Context-Aware**: Automatic project context generation and inclusion
-- **🔒 Security-First**: Safe command execution with injection prevention
-- **⚡ Non-Blocking**: Async operations with provider-specific rate limiting
-- **🎨 Visual Diffs**: Beautiful inline diff display with accept/reject
-- **📊 Multi-Provider**: Claude, OpenAI, Ollama, and custom endpoints
+- **📝 TODO Scanning**: Detects `TODO: @ai` comments and resolves them with AI
+- **💬 Interactive Chat**: Vim-native chat buffer (`:w` to send messages)
+- **👁️ Visual Mode**: Select code, get AI-powered refactoring/explanation
+- **🎨 Visual Diffs**: Inline diff display using native Neovim `DiffAdd`/`DiffDelete` highlighting with per-change accept/reject
+- **🔍 Context-Aware**: Includes LSP diagnostics, project context, and file content
+- **📊 Multi-Provider**: Claude, OpenAI, Ollama, and Claude CLI
+- **⚡ Rust Backend**: Async Rust process communicates via Unix socket for non-blocking LLM calls
 
-## 🏗️ How It Works
-
-### Architecture Overview
+## 🏗️ Architecture
 
 ```
-User Input → Parser → Context Builder → LLM Provider → Response Validator → Diff Display
-     ↑                      ↓                                   ↓
-     └──────── Chat Manager ←────── Retry Manager ──────────────┘
-                           ↓                ↓
-                    HTTP Client    Command Executor
-                   (Plenary curl)   (Plenary Job)
+User Input → unified_prompt.process() → Rust Backend (Unix socket)
+                                              ↓
+                                        LLM Provider (Claude/OpenAI/Ollama)
+                                              ↓
+                                        JSON Response {mode: "chat"|"changes"}
+                                              ↓
+                                        SEARCH/REPLACE blocks → Visual Diff
 ```
+
+**Key design decisions:**
+- **Single entry point**: All requests flow through `unified_prompt.process()`
+- **Aider-style SEARCH/REPLACE**: Exact text matching for code changes — no line numbers or complex diffs
+- **Fail fast**: No silent failures, no fallback behavior, no guessing
+- **Native Neovim diff**: Uses `DiffAdd`/`DiffDelete` highlighting for visual diffs
 
 ### Core Components
 
-1. **Native Plenary Integration**: Built on proven Neovim libraries:
-   - Uses Plenary's Job API for safe command execution
-   - Plenary's curl for reliable HTTP requests
-   - Native Vim validation and path handling
-
-2. **Response Validation & Auto-Recovery**: Every LLM response is validated:
-   - Sanitizes potential injection attempts
-   - Validates code changes (line numbers, syntax)
-   - Auto-fixes common issues (swapped line numbers, trailing commas)
-   - Exponential backoff with circuit breakers for resilience
-
-3. **Context Management**: Smart context generation with compression:
-   - Gathers project structure, dependencies, patterns
-   - Compresses for optimal token usage
-   - Caches for 5 minutes to reduce redundant processing
-   - Includes DRY hints for code reuse
-
-4. **Capability-Based Security**: Secure by design:
-   - Plenary's Job API prevents command injection
-   - Input validation with well-defined schemas
-   - No custom security layer - relies on proven components
-   - Rate limiting with circuit breakers
+| Component | Description |
+|-----------|-------------|
+| `unified_prompt.lua` | Single entry point for all AI requests |
+| `backend.lua` | Manages Rust backend process via Unix socket |
+| `search_replace.lua` | Applies SEARCH/REPLACE text transformations |
+| `diff.lua` | Visual diff display with accept/reject per change |
+| `chat.lua` | Interactive chat buffer |
+| `scanner.lua` | Finds `TODO: @ai` comments in buffers |
+| `visual.lua` | Visual mode selection processing |
+| `lsp_context.lua` | Collects LSP diagnostics for context |
+| `context_compact.lua` | Project context generation |
+| **Rust backend** | Async LLM communication, prompt building, response parsing |
 
 ## 📦 Installation
 
-> **Note**: No publishing required! Neovim package managers can install directly from GitHub.
-
-### Using [lazy.nvim](https://github.com/folke/lazy.nvim) (Recommended)
+### Using [lazy.nvim](https://github.com/folke/lazy.nvim)
 
 ```lua
 {
   "tpabla/todo-ai",
+  build = "make build-rust",
+  dependencies = { "nvim-lua/plenary.nvim" },
   config = function()
     require("todo-ai").setup({
       provider = "claude",
-      model = "claude-3-5-sonnet-20241022",
+      model = "claude-opus-4-6",
     })
   end,
-  keys = {
-    { "<leader>ts", desc = "Scan TODOs" },
-    { "<leader>tc", desc = "Open AI Chat" },
-    { "<leader>tg", desc = "Generate Context" },
-    { "<leader>td", desc = "Suggest DRY Tags" },
-    { "<leader>ta", desc = "Accept Changes" },
-    { "<leader>tr", desc = "Reject Changes" },
-  },
 }
 ```
 
-### Using [packer.nvim](https://github.com/wbthomason/packer.nvim)
-
-```lua
-use {
-  'tpabla/todo-ai',
-  config = function()
-    require('todo-ai').setup({ provider = 'claude' })
-  end
-}
-```
-
-### Using [vim-plug](https://github.com/junegunn/vim-plug)
-
-```vim
-Plug 'tpabla/todo-ai'
-
-" Then run:
-" :PlugInstall
-```
-
-### Manual Installation (if needed)
+### Manual
 
 ```bash
-# Clone to your Neovim packages directory
 git clone https://github.com/tpabla/todo-ai.git \
   ~/.local/share/nvim/site/pack/plugins/start/todo-ai
+cd ~/.local/share/nvim/site/pack/plugins/start/todo-ai
+make build-rust
 ```
 
 ## 🔧 Configuration
 
-### Required: Set API Keys
+### API Keys
 
 ```bash
-# ~/.bashrc or ~/.zshrc
-
-# For Claude (Anthropic)
+# Claude
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-# For OpenAI
+# OpenAI
 export OPENAI_API_KEY="sk-..."
 
-# For Ollama (no key needed, just ensure it's running)
+# Ollama (no key needed)
 ollama serve
 ```
 
-### Plugin Configuration
+### Setup
 
 ```lua
 require('todo-ai').setup({
-  -- Provider settings
-  provider = 'claude',  -- 'claude', 'openai', 'ollama'
-  model = 'claude-3-5-sonnet-20241022',
+  provider = 'claude',           -- 'claude', 'openai', 'ollama'
+  model = 'claude-opus-4-6',
   temperature = 0.7,
-  max_tokens = 4096,
+  max_tokens = 8192,
 
-  -- UI settings
-  diff_style = 'inline',  -- or 'split'
-  floating_window = true,
-  chat_window_width = 80,
+  -- UI
+  diff_style = 'inline',
+  chat_window_width = 60,
+  chat_window_position = 'right',
 
-  -- @ai highlighting
+  -- @ai tag highlighting
   ai_highlight = {
-    enabled = true,        -- Enable @ai tag highlighting
-    fg = '#ff79c6',       -- Neon pink (default cyberpunk color)
-    bg = '#1a1a2e',       -- Dark background
-    bold = true,          -- Bold styling
+    enabled = true,
+    fg = '#ff79c6',
+    bg = '#1a1a2e',
+    bold = true,
   },
-
-  -- Features
-  auto_scan_on_save = true,
-  auto_generate_context = false,
-  show_thinking = true,
-
-  -- Performance
-  cache_ttl = 300,  -- seconds
-  max_context_size = 10000,
-
-  -- Rate limiting
-  rate_limits = {
-    claude = { max_requests = 5, window_seconds = 60 },
-    openai = { max_requests = 20, window_seconds = 60 },
-  },
-
-  -- Optional integrations (enhance existing plugins)
-  integrations = {
-    todo_comments = {
-      enabled = true,      -- Enable if todo-comments.nvim is installed
-      auto_setup = true,   -- Automatically add DRY tag highlighting
-      custom_keywords = {  -- Add your own DRY tags
-        REFACTOR = { icon = "♻️", color = "info" },
-        EXTRACT = { icon = "🔬", color = "warning" },
-      },
-    },
-  },
-})
-```
-
-### 🔗 Optional Plugin Integrations
-
-TodoAI enhances plugins you may already have installed:
-
-#### todo-comments.nvim Integration
-If you have `folke/todo-comments.nvim`, TodoAI automatically adds highlighting for DRY tags:
-
-**Default DRY Tags:**
-- `# DRY:` 🔄 - Reusable function
-- `# UTIL:` 🔧 - Utility function
-- `# HELPER:` 🤝 - Helper function
-- `# PATTERN:` 🎯 - Reusable pattern
-- `# COMMON:` 🌟 - Common functionality
-- `# SHARED:` 🔗 - Shared component
-
-**Usage:**
-```python
-# DRY: Email validation that can be reused across forms
-def validate_email(email):
-    return re.match(r'^[^@]+@[^@]+\.[^@]+$', email) is not None
-```
-
-**Disable integration:**
-```lua
-require('todo-ai').setup({
-  integrations = {
-    todo_comments = { enabled = false }
-  }
 })
 ```
 
 ## 🎮 Usage
 
-### Working with TODOs
+### Keybindings
+
+| Key | Command | Description |
+|-----|---------|-------------|
+| `<leader>ts` | `:TodoAIScan` | Scan buffer for `TODO: @ai` comments |
+| `<leader>tc` | `:TodoAIChat` | Open interactive chat |
+| `<leader>ta` | `:TodoAIAccept` | Accept current change |
+| `<leader>tr` | `:TodoAIReject` | Reject current change |
+| `<leader>ti` | `:TodoAIVisual` | Process visual selection |
+| `<leader>tg` | `:TodoAIGenerateContext` | Generate project context |
+| `<leader>td` | `:TodoAISuggestDryTags` | Suggest DRY tags |
+| `<leader>tS` | `:TodoAIScanProject` | Scan entire project |
+
+### TODO Scanning
 
 ```python
-# TODO: Add error handling for API calls
+# TODO: @ai Add error handling for API calls
 def fetch_data(url):
     return requests.get(url).json()
-
-# TODO: @ai Optimize this function for performance
-def process_items(items):
-    # Press <leader>ts to scan and resolve
-    pass
 ```
 
-**@ai Tag Highlighting**: The `@ai` tag is automatically highlighted in neon pink to make AI-processable TODOs easily visible. This works independently of todo-comments.nvim and can be customized in your configuration.
+Press `<leader>ts` — the AI reads the TODO, generates a SEARCH/REPLACE block, and shows an inline diff you can accept or reject.
 
 ### Interactive Chat
 
-1. **Open**: `<leader>tc` opens chat window
-2. **Edit**: Type in the buffer like normal vim editing
-3. **Send**: Save buffer (`:w`) sends message
-4. **Commands**:
-   - `<C-c>` - Clear input
-   - `<C-d>` - Clear conversation
-   - `q` - Close chat
+1. `<leader>tc` opens the chat buffer
+2. Type your message like normal vim editing
+3. `:w` sends the message
+4. AI responds with either chat text or code changes
+5. Code changes appear as inline diffs in the target buffer
 
-### Visual Mode Processing
+### Visual Mode
 
-Select code and press `<leader>ti` to:
-- Explain code
-- Refactor selection
-- Add documentation
-- Fix issues
+Select code → `<leader>ti` → type instruction in floating window → AI processes selection.
 
-## 🛠️ Development Setup
-
-### Local Development Installation
-
-For active development, install the plugin directly from your local directory:
-
-#### Using lazy.nvim
-
-```lua
-{
-  dir = "~/Projects/todo-ai",  -- Your local development path
-  config = function()
-    require("todo-ai").setup({
-      provider = "claude",
-      log_level = "DEBUG",  -- Enable debug logging for development
-    })
-  end,
-}
-```
-
-#### Using packer.nvim
-
-```lua
-use {
-  '~/Projects/todo-ai',  -- Your local development path
-  config = function()
-    require('todo-ai').setup({
-      provider = 'claude',
-      log_level = 'DEBUG',
-    })
-  end
-}
-```
-
-#### Manual symlink
-
-```bash
-# Create a symlink for development
-ln -s ~/Projects/todo-ai ~/.local/share/nvim/site/pack/plugins/start/todo-ai
-```
-
-## 🏗️ Development
+## 🛠️ Development
 
 ### Project Structure
 
 ```
 todo-ai/
 ├── lua/todo-ai/
-│   ├── init.lua                 # Entry point & command registration
-│   ├── providers/               # LLM provider implementations
-│   │   ├── claude.lua          # Anthropic Claude
-│   │   ├── openai.lua          # OpenAI GPT
-│   │   └── ollama.lua          # Local Ollama
-│   ├── chat_manager.lua        # Conversation state & memory
-│   ├── context_compact.lua     # Project context generation
-│   ├── llm_validator.lua       # Response validation & retry
-│   ├── retry_manager.lua       # Exponential backoff & circuit breaker
-│   ├── http_client.lua         # HTTP requests via Plenary
-│   ├── command_executor.lua    # Safe execution via Plenary Job
-│   ├── config_manager.lua      # Config persistence
-│   ├── diff.lua               # Diff display & highlighting
-│   └── utils.lua              # Shared utilities
-├── tests/
-│   ├── plenary/               # Neovim integration tests
-│   ├── unit/                  # Standalone unit tests
-│   └── run_plenary_tests.sh   # Test runner
-└── plugin/todo-ai.vim         # Vim commands & keymaps
+│   ├── init.lua              # Entry point & command registration
+│   ├── unified_prompt.lua    # Single entry point for all AI requests
+│   ├── backend.lua           # Rust backend process management
+│   ├── search_replace.lua    # SEARCH/REPLACE text transformation
+│   ├── diff.lua              # Visual diff with DiffAdd/DiffDelete
+│   ├── chat.lua              # Chat buffer & messaging
+│   ├── scanner.lua           # TODO: @ai detection
+│   ├── visual.lua            # Visual mode processing
+│   ├── config.lua            # Configuration management
+│   ├── lsp_context.lua       # LSP diagnostics collection
+│   ├── context_compact.lua   # Project context generation
+│   ├── dry_tagger.lua        # DRY tag suggestions
+│   ├── integrations.lua      # Optional plugin integrations
+│   ├── logger.lua            # Debug logging
+│   └── dependencies.lua      # Dependency checking
+├── rust/
+│   └── src/
+│       ├── main.rs           # Unix socket server
+│       ├── rpc.rs            # JSON-RPC handler
+│       ├── providers/        # Claude, OpenAI, Ollama, Claude CLI
+│       ├── prompt.rs         # Prompt building
+│       ├── parser.rs         # Response parsing
+│       ├── schema.rs         # JSON schema validation
+│       └── ...
+├── plugin/todo-ai.vim        # Vim commands & keymaps
+├── tests/                    # Plenary.nvim tests
+└── Makefile
 ```
 
-### Key Implementation Details
-
-#### 1. **Async Flow with Validation**
-```lua
--- Simplified flow
-User Input
-  → validate_input()
-  → build_context()
-  → rate_limited_request()
-    → provider.chat_async()
-    → validate_response()
-    → retry_if_invalid()
-  → display_diff()
-```
-
-#### 2. **Memory Management**
-- Chat messages limited to 100 or 100k tokens
-- Automatic cleanup of old messages
-- Context cached with TTL
-- Log rotation at 10MB
-
-#### 3. **Provider Abstraction**
-Each provider implements:
-```lua
-M.chat(messages, config)        -- Sync chat
-M.chat_async(messages, config, callback)  -- Async chat
-M.validate_config()              -- Config validation
-```
-
-#### 4. **Diff Generation**
-- Parses LLM response for code blocks
-- Calculates minimal diff
-- Shows inline with syntax highlighting
-- Handles accept/reject with undo integration
-
-### Running Tests
-
-#### Prerequisites
+### Make Targets
 
 ```bash
-# Install Plenary.nvim (required for tests)
-# Using lazy.nvim - add to your Neovim config:
-{ 'nvim-lua/plenary.nvim' }
-
-# Or manually:
-git clone https://github.com/nvim-lua/plenary.nvim \
-  ~/.local/share/nvim/site/pack/test/start/plenary.nvim
+make build           # Build release Rust backend (default)
+make build-debug     # Build debug Rust backend (faster compile)
+make test            # Run all tests (Lua + Rust)
+make test-lua        # Run Lua/Neovim tests only
+make test-rust       # Run Rust tests only
+make test-single FILE=tests/plenary/some_spec.lua
+make lint            # Find dead Lua code
+make install         # Build and install to Neovim packages dir
+make dev             # Symlink local copy for development
+make clean           # Remove build artifacts
+make help            # Show all targets
 ```
 
-#### Test Commands
+### Debug Logging
 
-```bash
-# Run all tests
-make test
-
-# Run specific test file
-make test-file FILE=tests/plenary/llm_validator_spec.lua
-
-# Alternative: Run tests directly
-bash tests/run_plenary_tests.sh
-
-# Watch mode (requires fswatch on macOS or entr on Linux)
-make test-watch
+```lua
+require('todo-ai').setup({ log_level = 'DEBUG' })
 ```
-
-#### Running Tests in Neovim
 
 ```vim
-" Run current test file (if in a *_spec.lua file)
-:PlenaryBustedFile %
-
-" Run all tests in directory
-:PlenaryBustedDirectory tests/plenary/
-```
-
-#### Debugging Failed Tests
-
-```bash
-# Run with verbose output
-nvim --headless -u tests/minimal_init.lua \
-  -c "lua require('plenary.test_harness').test_directory('tests/plenary', {minimal_init = 'tests/minimal_init.lua', sequential = true})"
-
-# Check test logs
+:TodoAILogs
+" or
 tail -f /tmp/todo-ai.log
 ```
-
-### Adding a New Provider
-
-```lua
--- lua/todo-ai/providers/newprovider.lua
-local M = {}
-
-function M.setup(config)
-  -- Validate API keys, endpoints
-end
-
-function M.chat_async(messages, config, callback)
-  -- Implement async chat
-  -- Must call: callback(response, error)
-end
-
--- Register in providers/init.lua
-providers.register('newprovider', require('todo-ai.providers.newprovider'))
-```
-
-## 📚 API Documentation
-
-Auto-generated API documentation from LuaLS annotations:
-
-- [Generate docs](docs/PROVIDER_API.md) - Provider API documentation
-- [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
-
-### Generating Documentation
-
-```bash
-# Generate API docs from source annotations
-make docs
-
-# View generated documentation
-ls docs/api/
-```
-
-The plugin uses LuaLS annotations for type checking and documentation generation. All public APIs are documented with:
-- Parameter types and descriptions
-- Return value specifications
-- Usage examples
-- Error conditions
-
-## 🔒 Security Features
-
-- **Command Whitelisting**: Only safe commands (ls, git, curl) allowed
-- **Input Sanitization**: Removes injection attempts from all inputs
-- **Path Validation**: Prevents directory traversal attacks
-- **Rate Limiting**: Token bucket algorithm per provider
-- **No Secret Logging**: API keys never logged or displayed
-
-## 🧪 Testing
-
-The plugin uses Plenary.nvim for testing, which runs tests in a real Neovim environment:
-
-- **Test Coverage**: ~85% with 50+ tests
-- **Test Location**: `tests/plenary/`
-- **Framework**: Plenary.nvim (required)
-- **Runtime**: ~500ms for full suite
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-| Issue | Solution |
-|-------|----------|
-| "API key not found" | Set environment variable: `export ANTHROPIC_API_KEY="..."` |
-| "Rate limit exceeded" | Wait 60 seconds (automatic retry with backoff) |
-| "Context generation failed" | Run `:TodoAIGenerateContext` manually |
-| "Diff not showing" | Check `:messages` for errors, ensure buffer is modifiable |
-
-### Debug Mode
-
-```lua
-require('todo-ai').setup({
-  log_level = 'DEBUG',
-  log_file = '/tmp/todo-ai.log'
-})
-
--- View logs
-:TodoAIViewLog
--- Or in terminal
-tail -f /tmp/todo-ai.log
-```
-
-## 📊 Performance
-
-- **Memory**: ~5-10MB resident
-- **Context Generation**: <100ms (cached)
-- **API Response**: 1-5s depending on provider
-- **Diff Display**: <50ms
-- **Test Suite**: 43 tests in ~400ms
-
-## 🎯 Roadmap
-
-- [ ] Streaming responses
-- [ ] Multi-file refactoring
-- [ ] Test generation from code
-- [ ] Git integration (commit messages)
-- [ ] Language server integration
-- [ ] Custom prompt templates
 
 ## 📄 License
 
-MIT - See [LICENSE](LICENSE) file
+MIT
 
 ## 🙏 Credits
 
-**Inspired by:**
-- [aider](https://github.com/paul-gauthier/aider) - AI pair programming in your terminal
-- [codecompanion.nvim](https://github.com/olimorris/codecompanion.nvim) - AI-powered coding assistant for Neovim
+**Inspired by:** [aider](https://github.com/paul-gauthier/aider) (SEARCH/REPLACE approach), [codecompanion.nvim](https://github.com/olimorris/codecompanion.nvim)
 
-**Built with:**
-- [Neovim](https://neovim.io/) - The extensible Vim-based text editor
-- [Plenary.nvim](https://github.com/nvim-lua/plenary.nvim) - Lua testing framework
-- [Claude](https://anthropic.com), [OpenAI](https://openai.com), [Ollama](https://ollama.ai) - AI providers
-
-## 💬 Support
-
-- **Issues**: [GitHub Issues](https://github.com/taran/todo-ai/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/taran/todo-ai/discussions)
-
----
-
-Made with ❤️ for the Neovim community
+**Built with:** [Neovim](https://neovim.io/), [Plenary.nvim](https://github.com/nvim-lua/plenary.nvim), [Claude](https://anthropic.com), [OpenAI](https://openai.com), [Ollama](https://ollama.ai)

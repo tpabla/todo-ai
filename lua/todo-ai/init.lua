@@ -3,8 +3,6 @@ local scanner = require('todo-ai.scanner')
 local diff = require('todo-ai.diff')
 local chat = require('todo-ai.chat')
 local config = require('todo-ai.config')
--- Providers will be loaded after config setup
-local providers
 
 M.state = {
   current_todo = nil,
@@ -19,14 +17,19 @@ function M.setup(opts)
   local logger = require('todo-ai.logger')
   logger.init(config.config)
 
-  -- Load providers after config is set up
-  providers = require('todo-ai.providers')
-  providers.setup()
-
   -- Check dependencies
   local deps = require('todo-ai.dependencies')
   deps.check_dependencies()
 
+  -- Start Rust backend
+  local backend = require('todo-ai.backend')
+  local plugin_dir = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":h:h:h")
+  local binary = plugin_dir .. "/rust/target/release/todo-ai-backend"
+  if vim.fn.executable(binary) == 1 then
+    backend.start(config.config)
+  else
+    error("todo-ai-backend binary not found at: " .. binary .. " — run 'make build-rust'")
+  end
 
   -- Setup optional integrations
   local integrations = require('todo-ai.integrations')
@@ -94,64 +97,6 @@ function M.process_todo(todo, bufnr)
   })
 end
 
-function M.gather_context(bufnr, todo)
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local file_content = table.concat(lines, '\n')
-  local file_path = vim.api.nvim_buf_get_name(bufnr)
-
-
-  -- Load project context
-  local context_module = require('todo-ai.context_compact')
-  local project_context = context_module.get_for_prompt()
-
-  -- Get other open buffers for context (read-only)
-  local other_buffers = {}
-  for _, other_bufnr in ipairs(vim.api.nvim_list_bufs()) do
-    if other_bufnr ~= bufnr and vim.api.nvim_buf_is_loaded(other_bufnr) and vim.bo[other_bufnr].buflisted then
-      local name = vim.api.nvim_buf_get_name(other_bufnr)
-      if name ~= '' and not name:match('^Todo%-AI Chat') then
-        local other_lines = vim.api.nvim_buf_get_lines(other_bufnr, 0, math.min(100, vim.api.nvim_buf_line_count(other_bufnr)), false)
-        table.insert(other_buffers, {
-          path = name,
-          filename = vim.fn.fnamemodify(name, ':t'),
-          filetype = vim.bo[other_bufnr].filetype,
-          content = table.concat(other_lines, '\n')
-        })
-      end
-    end
-  end
-
-  -- Get project root
-  local project_root = vim.fn.getcwd()
-  local git_root = vim.fn.system('git rev-parse --show-toplevel 2>/dev/null'):gsub('\n', '')
-  if git_root ~= '' then
-    project_root = git_root
-  end
-
-  -- Read .todoai cache if exists
-  local cache_path = project_root .. '/.todoai/context.json'
-  local cached_context = nil
-  if vim.fn.filereadable(cache_path) == 1 then
-    local cache_file = io.open(cache_path, 'r')
-    if cache_file then
-      cached_context = vim.fn.json_decode(cache_file:read('*all'))
-      cache_file:close()
-    end
-  end
-
-  return {
-    file_content = file_content,
-    file_path = file_path,
-    language = vim.bo[bufnr].filetype,
-    line_number = todo.line,
-    surrounding_lines = M.get_surrounding_lines(lines, todo.line, 20),
-    project_root = project_root,
-    project_context = project_context,  -- Compact project context
-    cached_context = cached_context,
-    other_buffers = other_buffers  -- Additional context from open buffers
-  }
-end
-
 function M.get_surrounding_lines(lines, target_line, radius)
   local start_line = math.max(1, target_line - radius)
   local end_line = math.min(#lines, target_line + radius)
@@ -169,103 +114,11 @@ function M.get_surrounding_lines(lines, target_line, radius)
 end
 
 function M.accept_change()
-  diff.accept_all()
+  diff.accept_at_cursor()
 end
 
 function M.reject_change()
-  diff.reject_all()
-end
-
-function M.format_response(response)
-  -- Format the response for display
-  local formatted = {}
-
-  -- Add thinking/reasoning section if present
-  if response.thinking_formatted then
-    table.insert(formatted, response.thinking_formatted)
-  end
-
-  -- Add SEARCH/REPLACE changes with proper language formatting
-  if response.changes then
-    local language = response.language or vim.bo.filetype or 'text'
-    table.insert(formatted, string.format('### 📄 Changes (%s)', language:gsub('^%l', string.upper)))
-
-    for i, change in ipairs(response.changes) do
-      if change.search and change.replace then
-        table.insert(formatted, string.format('\n**Change %d**: %s',
-          i, change.description or "Update"))
-        -- Show search/replace in a clear format
-        table.insert(formatted, string.format('```%s', language))
-        table.insert(formatted, '<<<<<<< SEARCH')
-        table.insert(formatted, change.search)
-        table.insert(formatted, '=======')
-        table.insert(formatted, change.replace)
-        table.insert(formatted, '>>>>>>> REPLACE')
-        table.insert(formatted, '```')
-      end
-    end
-  end
-
-  -- Add explanation if different from thinking
-  if response.explanation and response.explanation ~= "" and response.explanation ~= "Generated code" then
-    table.insert(formatted, '\n### 💬 Explanation\n' .. response.explanation)
-  end
-
-  -- Add parsed sections if interesting
-  if response.parsed_sections and type(response.parsed_sections) == 'table' then
-    -- Skip Additional Context section entirely since diffs are now properly formatted
-    -- Only show if there are truly unique fields we haven't displayed
-    local has_interesting = false
-    for k, v in pairs(response.parsed_sections) do
-      -- Skip all standard fields that are already displayed elsewhere
-      if k ~= 'code' and k ~= 'explanation' and k ~= 'thinking' and
-         k ~= 'changes' and k ~= 'edits' and k ~= 'code_snippet' and
-         k ~= 'new_file' and k ~= 'replace_buffer' and
-         k ~= 'language' then  -- Also skip changes and language
-        has_interesting = true
-        break
-      end
-    end
-
-    -- Only show Additional Context if there are truly unique fields
-    if has_interesting then
-      table.insert(formatted, '\n### 📋 Additional Context')
-      for k, v in pairs(response.parsed_sections) do
-        if k ~= 'code' and k ~= 'explanation' and k ~= 'thinking' and
-           k ~= 'changes' and k ~= 'edits' and k ~= 'code_snippet' and
-           k ~= 'new_file' and k ~= 'replace_buffer' and
-           k ~= 'language' then  -- Also skip changes and language
-          -- Format value based on type
-          local value_str
-          if type(v) == 'table' then
-            -- Only show first few items for arrays to avoid clutter
-            if #v > 3 then
-              value_str = string.format('[%d items]', #v)
-            else
-              value_str = vim.inspect(v, {depth = 1, indent = "  "})
-            end
-          elseif type(v) == 'string' then
-            -- Truncate long strings
-            if #v > 100 then
-              value_str = v:sub(1, 100) .. '...'
-            else
-              value_str = v
-            end
-          else
-            value_str = tostring(v)
-          end
-          table.insert(formatted, string.format('**%s**: %s', k, value_str))
-        end
-      end
-    end
-  end
-
-  -- Only show format detection if there was an error parsing
-  if response.error and response.format_detected then
-    table.insert(formatted, '\n> *Format detection failed: ' .. response.format_detected .. '*')
-  end
-
-  return table.concat(formatted, '\n')
+  diff.reject_at_cursor()
 end
 
 function M.open_chat()
@@ -289,10 +142,7 @@ end
 
 -- Process all TODOs in the project
 function M.process_project_todos()
-  local scanner = require('todo-ai.scanner')
-  local chat = require('todo-ai.chat')
-  local config = require('todo-ai.config')
-  local prompt_builder = require('todo-ai.prompt_builder')
+  local unified_prompt = require('todo-ai.unified_prompt')
 
   -- Open chat window first
   M.open_chat()
@@ -309,7 +159,7 @@ function M.process_project_todos()
   -- Format all TODOs for context
   local formatted_todos = scanner.format_project_todos(todos_by_file)
 
-  -- Build special prompt for project-wide TODOs
+  -- Build instruction
   local instruction = [[Process all the TODOs found in the project.
 CRITICAL: Return changes in a logical order for a developer to review:
 1. Group related changes together
@@ -317,71 +167,21 @@ CRITICAL: Return changes in a logical order for a developer to review:
 3. Provide reasoning in the explanation for each change about WHY this order makes sense
 4. Each change should include the file path in the description]]
 
-  local context = {
-    project_todos = formatted_todos,
-    mode = 'project_scan'
-  }
-
-  -- Get provider and process
-  local provider_name = config.get('provider')
-  local provider = require('todo-ai.providers')[provider_name]
-
-  if not provider then
-    chat.add_message('ai', 'Error: Provider ' .. provider_name .. ' not found')
-    return
-  end
+  -- Create context for the backend
+  local context = unified_prompt.create_context({
+    mode = 'chat',
+    instruction = instruction,
+  })
+  context.project_todos = formatted_todos
+  context.mode = 'project_scan'
 
   -- Show thinking indicator
-  chat.show_thinking()
+  chat.show_thinking(config.get('model'))
 
-  -- Request completion
-  provider.complete_async(instruction, vim.fn.json_encode(context), {
-    model = config.get('model'),
-    temperature = config.get('temperature')
-  }, function(response, error)
+  -- Send through unified prompt (routes to Rust backend)
+  unified_prompt.send_to_provider(context, function(response, err)
     chat.hide_thinking()
-
-    if error then
-      chat.add_message('ai', 'Error: ' .. error)
-      vim.notify('Error: ' .. error, vim.log.levels.ERROR)
-      return
-    end
-
-    -- For project-wide changes, we need to handle multiple files
-    if response.changes then
-      -- Group changes by file
-      local changes_by_file = {}
-      for _, change in ipairs(response.changes) do
-        -- Extract file from description or use current buffer
-        local file = change.file or vim.api.nvim_get_current_buf()
-        if not changes_by_file[file] then
-          changes_by_file[file] = {}
-        end
-        table.insert(changes_by_file[file], change)
-      end
-
-      -- Store for sequential processing
-      M.state.project_changes = changes_by_file
-      M.state.current_file_index = 1
-      local files = vim.tbl_keys(changes_by_file)
-      M.state.project_files = files
-
-      -- Start with first file
-      if #files > 0 then
-        local first_file = files[1]
-        vim.cmd('edit ' .. first_file)
-
-        -- Show diff for first file
-        local bufnr = vim.api.nvim_get_current_buf()
-        diff.show_response(bufnr, {changes = changes_by_file[first_file], explanation = response.explanation})
-      end
-    end
-
-    -- Add to chat
-    local formatted = M.format_response(response)
-    if formatted and formatted ~= '' then
-      chat.add_message('ai', formatted)
-    end
+    unified_prompt.handle_response(response, err, context)
   end)
 end
 

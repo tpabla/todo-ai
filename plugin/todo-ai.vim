@@ -5,8 +5,8 @@ if exists('g:loaded_todo_ai')
 endif
 let g:loaded_todo_ai = 1
 
-" Initialize Lua module
-lua require('todo-ai').setup()
+" Initialize Lua module (setup called by lazy.nvim config, not here)
+" lua require('todo-ai').setup()
 
 " Commands
 command! TodoAIScan lua require('todo-ai').scan_buffer()
@@ -22,11 +22,6 @@ command! TodoAIScanProject lua require('todo-ai').process_project_todos()
 command! TodoAIAcceptAll lua require('todo-ai').accept_all_project_changes()
 command! TodoAILogs lua vim.cmd('split /tmp/todo-ai.log | setlocal autoread | normal! G')
 
-" Edit queue commands
-command! TodoAIEditAccept lua require('todo-ai.chat').accept_current_edit()
-command! TodoAIEditReject lua require('todo-ai.chat').reject_current_edit()
-command! TodoAIEditNext lua require('todo-ai.chat').show_next_edit()
-
 " Default keymaps (user can override)
 nnoremap <silent> <leader>ts :TodoAIScan<CR>
 nnoremap <silent> <leader>ta :TodoAIAccept<CR>
@@ -39,11 +34,6 @@ nnoremap <silent> <leader>tG :TodoAIAcceptAll<CR>
 
 " Visual mode keybinding for interactive TODO
 vnoremap <silent> <leader>ti :'<,'>TodoAIVisual<CR>
-
-" Edit queue keymaps
-nnoremap <silent> <leader>ea :TodoAIEditAccept<CR>
-nnoremap <silent> <leader>er :TodoAIEditReject<CR>
-nnoremap <silent> <leader>en :TodoAIEditNext<CR>
 
 " Auto-scan on save if enabled
 augroup TodoAI

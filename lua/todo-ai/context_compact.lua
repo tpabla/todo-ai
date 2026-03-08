@@ -623,14 +623,6 @@ function M.generate_and_open()
 end
 
 -- Auto-update specific info
-function M.auto_update(change_type)
-  -- Only regenerate if significant change
-  if change_type == 'major' then
-    M.cache = nil  -- Clear cache
-    M.save()
-  end
-end
-
 ---Parse human notes from context
 ---@param content string
 ---@return string|nil

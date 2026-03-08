@@ -3,7 +3,7 @@ local M = {}
 M.defaults = {
     -- Provider settings
     provider = 'claude',     -- 'claude', 'openai', 'ollama'
-    model = 'claude-sonnet-4-20250514', -- Latest Claude 4 Sonnet (user can override)
+    model = nil, -- Required: e.g. 'claude-opus-4-6', 'sonnet', 'gpt-4o'
 
     -- API settings (automatically uses environment variables)
     api_key = nil, -- For Claude/OpenAI (defaults to ANTHROPIC_API_KEY or OPENAI_API_KEY)
@@ -111,6 +111,11 @@ function M.setup(opts)
 end
 
 function M.validate()
+    -- Model is required
+    if not M.config.model then
+        error('todo-ai: model is required in config (e.g. model = "claude-opus-4-6")')
+    end
+
     -- Check if provider requires API key
     if (M.config.provider == 'claude' or M.config.provider == 'openai') and not M.config.api_key then
         vim.notify(
@@ -121,13 +126,9 @@ function M.validate()
     end
 
     -- Validate provider
-    local valid_providers = { 'claude', 'openai', 'ollama' }
+    local valid_providers = { 'claude', 'claude-cli', 'openai', 'ollama' }
     if not vim.tbl_contains(valid_providers, M.config.provider) then
-        vim.notify(
-            string.format('Invalid provider: %s. Using claude.', M.config.provider),
-            vim.log.levels.WARN
-        )
-        M.config.provider = 'claude'
+        error(string.format('todo-ai: invalid provider %q. Valid: %s', M.config.provider, table.concat(valid_providers, ', ')))
     end
 end
 
@@ -140,20 +141,4 @@ function M.set(key, value)
 end
 
 -- Load project-specific config if exists
-function M.load_project_config()
-    local project_config_path = vim.fn.getcwd() .. '/.todoai/config.json'
-    if vim.fn.filereadable(project_config_path) == 1 then
-        local file = io.open(project_config_path, 'r')
-        if file then
-            local content = file:read('*all')
-            file:close()
-            local project_config = vim.fn.json_decode(content)
-            if project_config then
-                M.config = vim.tbl_deep_extend('force', M.config, project_config)
-                vim.notify('Loaded project-specific Todo-AI config', vim.log.levels.INFO)
-            end
-        end
-    end
-end
-
 return M

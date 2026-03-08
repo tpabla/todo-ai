@@ -2,9 +2,6 @@
 -- Single source of truth for TODO scan, chat, and visual mode
 local M = {}
 
-local prompt_builder = require('todo-ai.prompt_builder')
-local prompt_config = require('todo-ai.prompt_config')
-local parser = require('todo-ai.parser')
 local logger = require('todo-ai.logger')
 
 -- Unified context structure that all paths should use
@@ -77,33 +74,18 @@ function M.enrich_with_project_context(context)
     end
   end
 
-  -- Get other open buffers for context
-  local other_buffers = {}
+  -- Collect absolute paths of other open buffers (Rust reads contents if needed)
+  local open_buffers = {}
   local current_bufnr = context.bufnr
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if bufnr ~= current_bufnr and vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buflisted then
       local name = vim.api.nvim_buf_get_name(bufnr)
-      if name ~= '' and not name:match('^Todo%-AI Chat') then
-        -- Get buffer content (limit size to avoid huge context)
-        local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-        local content = table.concat(lines, '\n')
-
-        -- Limit content size (e.g., first 2000 chars)
-        if #content > 2000 then
-          content = content:sub(1, 2000) .. '\n... [content truncated]'
-        end
-
-        table.insert(other_buffers, {
-          path = name,
-          filename = vim.fn.fnamemodify(name, ':t'),
-          filetype = vim.bo[bufnr].filetype,
-          bufnr = bufnr,  -- Store bufnr for LSP collection
-          content = content
-        })
+      if name ~= '' and not name:match('Todo%-AI Chat') then
+        table.insert(open_buffers, name)
       end
     end
   end
-  context.other_buffers = other_buffers
+  context.open_buffers = open_buffers
 
   -- Load compact project context
   local ok, context_module = pcall(require, 'todo-ai.context_compact')
@@ -125,15 +107,17 @@ function M.enrich_with_project_context(context)
         context.lsp = lsp_data
       end
 
-      -- Get LSP context for all other open buffers if enabled
+      -- Get LSP diagnostics for other open buffers
       if lsp_config.include_all_buffers ~= false then
         local all_buffers_lsp = {}
-        for _, buf_info in ipairs(context.other_buffers or {}) do
-          if buf_info.bufnr then
-            -- Get simplified LSP data for other buffers (mainly diagnostics)
-            local buf_lsp = lsp_context.get_buffer_diagnostics_summary(buf_info.bufnr)
-            if buf_lsp then
-              all_buffers_lsp[buf_info.filename] = buf_lsp
+        for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+          if bufnr ~= context.bufnr and vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buflisted then
+            local name = vim.api.nvim_buf_get_name(bufnr)
+            if name ~= '' and not name:match('Todo%-AI Chat') then
+              local buf_lsp = lsp_context.get_buffer_diagnostics_summary(bufnr)
+              if buf_lsp then
+                all_buffers_lsp[vim.fn.fnamemodify(name, ':t')] = buf_lsp
+              end
             end
           end
         end
@@ -165,87 +149,25 @@ function M.get_surrounding_lines(lines, target_line, radius)
   return result
 end
 
--- Build the complete prompt (system + user) for any mode
-function M.build_complete_prompt(context)
-  -- Get system prompt (schema and rules)
-  local system_prompt = prompt_config.get_schema_description()
-
-  -- Build user prompt based on context
-  local context_json = vim.fn.json_encode(context)
-  local user_prompt = prompt_builder.build_user_prompt(context.instruction, context_json)
-
-  -- Add mode-specific hints if needed
-  if context.is_visual then
-    user_prompt = user_prompt .. '\n\nIMPORTANT: Return the code changes in JSON format with mode="changes" and filename="' .. context.filename .. '"'
-  elseif context.is_todo then
-    user_prompt = user_prompt .. '\n\nIMPORTANT: Use mode="changes" to provide code modifications for the TODO.'
-  end
-
-  return {
-    system = system_prompt,
-    user = user_prompt,
-    full = system_prompt .. "\n\n" .. user_prompt
-  }
-end
-
--- Send prompt to provider and handle response
+-- Send context to Rust backend for completion
 function M.send_to_provider(context, callback)
-  local providers = require('todo-ai.providers')
-  local config = require('todo-ai.config')
+  local backend = require('todo-ai.backend')
 
-  -- Ensure providers are initialized
-  if not providers._initialized then
-    providers.setup()
+  if not backend.is_available() then
+    error("Rust backend not available — cannot send to provider")
   end
 
-  local provider_name = config.get('provider')
-  local provider = providers.get(provider_name)
+  logger.info('unified_prompt', 'Sending to Rust backend via complete RPC')
 
-  if not provider then
-    callback(nil, 'Provider ' .. provider_name .. ' not found')
-    return
-  end
-
-  -- Build the prompt
-  local prompts = M.build_complete_prompt(context)
-
-  -- Use complete_async for TODO processing style (includes system prompt)
-  if provider.complete_async then
-    -- Send as instruction + context (provider will add system prompt)
-    provider.complete_async(context.instruction, vim.fn.json_encode(context), {
-      model = config.get('model'),
-      temperature = config.get('temperature')
-    }, callback)
-  elseif provider.chat_async then
-    -- For chat-based providers, send as messages
-    local messages = {}
-
-    -- Add system prompt
-    table.insert(messages, {role = 'system', content = prompts.system})
-
-    -- Add conversation history if provided
-    if context.conversation_history then
-      for _, msg in ipairs(context.conversation_history) do
-        -- Only include user and assistant messages (not system or thinking)
-        if msg.role == 'user' or msg.role == 'assistant' then
-          table.insert(messages, {
-            role = msg.role,
-            content = msg.content
-          })
-        end
-      end
+  -- Send context directly — Rust builds prompts, calls provider, parses, validates
+  backend.request("complete", context, function(result, rpc_err)
+    if rpc_err then
+      local err_msg = type(rpc_err) == 'table' and rpc_err.message or tostring(rpc_err)
+      callback(nil, err_msg)
+      return
     end
-
-    -- Add current user message
-    table.insert(messages, {role = 'user', content = prompts.user})
-
-    provider.chat_async(messages, {
-      model = config.get('model'),
-      temperature = config.get('temperature')
-    }, callback)
-  else
-    callback(nil, 'Provider does not support async operations')
-  end
+    callback(result, nil)
+  end)
 end
 
 -- Handle provider response uniformly
@@ -259,63 +181,14 @@ function M.handle_response(response, error, context)
     return
   end
 
-  -- Debug logging for response
-  local logger = require('todo-ai.logger')
-  local validator = require('todo-ai.schema_validator')
-
-  logger.debug('Raw LLM response type: ' .. type(response))
-
-  -- Parse response if it's a string
-  if type(response) == 'string' then
-    logger.debug('Raw response string: ' .. vim.inspect(response))
-    response = parser.parse(response, context.instruction)
-    logger.debug('Parsed response: ' .. vim.inspect(response))
-
-    -- Check for parse errors
-    if response.parse_error then
-      logger.error('Parse error: ' .. response.parse_error)
-      chat.add_message('ai', string.format([[
-## ❌ JSON Parse Error
-
-The LLM returned invalid JSON that couldn't be parsed.
-
-**Error:** %s
-
-**Raw response logged to:** `/tmp/todo-ai.log`
-
-This usually means the LLM included:
-- Extra text before/after the JSON
-- Invalid JSON syntax
-- Markdown code blocks around the JSON
-
-Please try your request again.
-]], response.parse_error))
-      return
-    end
-  else
-    logger.debug('Response object: ' .. vim.inspect(response))
-  end
-
-  -- STRICT VALIDATION - Fail loudly if schema doesn't match
-  local valid, validation_errors = validator.validate_response(response)
-  if not valid then
-    logger.error('Schema validation failed: ' .. vim.inspect(validation_errors))
-
-    -- Show detailed error to user
-    local error_message = validator.format_validation_errors(validation_errors)
-    chat.add_message('ai', error_message)
-
-    -- Log to file for debugging
-    logger.error('Full invalid response: ' .. vim.inspect(response))
-
-    -- STOP PROCESSING - Don't try to guess or recover
-    return
-  end
-
-  -- Log validated fields
-  logger.debug('✓ Schema validation passed')
+  -- Response is already parsed and validated by Rust backend
   logger.debug('Response mode: ' .. tostring(response.mode))
   logger.debug('Response filename: ' .. tostring(response.filename))
+
+  -- Show validation warnings if Rust returned them
+  if response.validation_errors then
+    logger.error('Schema validation warnings: ' .. vim.inspect(response.validation_errors))
+  end
 
   -- Handle based on response mode
   if response.mode == "chat" then
@@ -333,9 +206,16 @@ Please try your request again.
     local target_buf = nil
 
     if response.filename then
-      -- Build full path
-      local full_path = response.filename:match('^/') and response.filename or
-                       (vim.fn.getcwd() .. '/' .. response.filename)
+      -- Build full path — prefer context.file_path if the filename matches
+      -- to avoid path doubling (e.g. LLM returns "rust/src/main.rs" when cwd already includes "rust/")
+      local full_path
+      if response.filename:match('^/') then
+        full_path = response.filename
+      elseif context.file_path and context.file_path:match(response.filename:gsub('([%(%)%.%%%+%-%*%?%[%^%$])', '%%%1') .. '$') then
+        full_path = context.file_path
+      else
+        full_path = vim.fn.getcwd() .. '/' .. response.filename
+      end
 
       -- Get or create buffer
       target_buf = vim.fn.bufnr(full_path)
