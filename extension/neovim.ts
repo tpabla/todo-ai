@@ -198,6 +198,12 @@ export default function (pi: ExtensionAPI) {
       line: Type.Optional(
         Type.Number({ description: "Line number (for open_file)" })
       ),
+      search: Type.Optional(
+        Type.String({
+          description:
+            "Pattern to search for after opening (jumps to first match, more reliable than line numbers)",
+        })
+      ),
     }),
     async execute(toolCallId, params) {
       if (!nvim) return ok("Neovim not connected");
@@ -205,7 +211,21 @@ export default function (pi: ExtensionAPI) {
         if (params.action === "open_file") {
           if (!params.path) return ok("Error: path required");
           const safePath = params.path.replace(/'/g, "\\'");
-          const line = params.line || 1;
+          let line = params.line || 1;
+
+          // Search for pattern to find accurate line number
+          if (params.search) {
+            try {
+              const out = execFileSync(
+                "grep",
+                ["-n", "-m", "1", params.search, params.path],
+                { encoding: "utf-8", timeout: 3000 }
+              );
+              const match = out.match(/^(\d+):/);
+              if (match) line = parseInt(match[1], 10);
+            } catch {}
+          }
+
           nvimExec(
             `require('todo-ai').remote_open('${safePath}', ${line})`
           );
