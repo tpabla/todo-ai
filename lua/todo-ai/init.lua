@@ -80,19 +80,6 @@ function M._build_cmd(initial_prompt)
   local cmd = { 'pi' }
   local cfg = config.config
 
-  if cfg.pi_provider then
-    table.insert(cmd, '--provider')
-    table.insert(cmd, cfg.pi_provider)
-  end
-  if cfg.pi_model then
-    table.insert(cmd, '--model')
-    table.insert(cmd, cfg.pi_model)
-  end
-  if cfg.pi_thinking then
-    table.insert(cmd, '--thinking')
-    table.insert(cmd, cfg.pi_thinking)
-  end
-
   table.insert(cmd, '-e')
   table.insert(cmd, M._extension_path())
 

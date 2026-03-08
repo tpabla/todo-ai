@@ -25,14 +25,6 @@ See [pi docs](https://github.com/mariozechner/pi-coding-agent) for all supported
 
 Neovim **0.10+** required.
 
-### 3. Optional: diffview.nvim
-
-For reviewing file changes pi makes:
-
-```lua
-{ "sindrets/diffview.nvim" }
-```
-
 ## Plugin setup
 
 ### lazy.nvim
@@ -41,13 +33,10 @@ For reviewing file changes pi makes:
 {
   "tpabla/todo-ai",
   dependencies = {
-    "sindrets/diffview.nvim",  -- optional
+    "sindrets/diffview.nvim",
   },
   config = function()
-    require("todo-ai").setup({
-      pi_provider = "anthropic",
-      pi_model = "sonnet",
-    })
+    require("todo-ai").setup()
   end,
 }
 ```
@@ -57,11 +46,11 @@ For reviewing file changes pi makes:
 ```lua
 use {
   "tpabla/todo-ai",
+  requires = {
+    "sindrets/diffview.nvim",
+  },
   config = function()
-    require("todo-ai").setup({
-      pi_provider = "anthropic",
-      pi_model = "sonnet",
-    })
+    require("todo-ai").setup()
   end,
 }
 ```
@@ -71,31 +60,25 @@ use {
 ```bash
 git clone https://github.com/tpabla/todo-ai.git \
   ~/.local/share/nvim/site/pack/plugins/start/todo-ai
+git clone https://github.com/sindrets/diffview.nvim.git \
+  ~/.local/share/nvim/site/pack/plugins/start/diffview.nvim
 ```
 
 Add to your `init.lua`:
 
 ```lua
-require("todo-ai").setup({
-  pi_provider = "anthropic",
-  pi_model = "sonnet",
-})
+require("todo-ai").setup()
 ```
 
 ## Configuration
 
-All settings are optional. Omit any to use pi's defaults.
+Provider, model, and thinking are configured through pi itself (see [pi docs](https://github.com/mariozechner/pi-coding-agent)). The settings below are todo-ai-specific:
 
 ```lua
 require("todo-ai").setup({
-  -- Pi settings
-  pi_provider = "anthropic",    -- Provider: anthropic, openai, google, ollama, etc.
-  pi_model = "sonnet",          -- Model name or pattern
-  pi_thinking = "medium",       -- off, minimal, low, medium, high, xhigh
   pi_extra_args = {},            -- Additional CLI args for pi
                                  --   { "--continue" }    resume last session
                                  --   { "--no-session" }  ephemeral session
-                                 --   { "--tools", "read,bash,edit,write,grep" }
 
   -- UI
   pi_position = "right",        -- Terminal position: "right" or "left"
@@ -192,8 +175,9 @@ The extension calls `:checktime` automatically. If it's not working:
 
 ### Diffview not opening
 
-Install [diffview.nvim](https://github.com/sindrets/diffview.nvim):
+diffview.nvim is a required dependency. If using lazy.nvim or packer, it should be installed automatically. For manual installs:
 
-```lua
-{ "sindrets/diffview.nvim" }
+```bash
+git clone https://github.com/sindrets/diffview.nvim.git \
+  ~/.local/share/nvim/site/pack/plugins/start/diffview.nvim
 ```

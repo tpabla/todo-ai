@@ -34,11 +34,9 @@ See **[INSTALL.md](INSTALL.md)** for detailed setup.
 -- lazy.nvim
 {
   "tpabla/todo-ai",
+  dependencies = { "sindrets/diffview.nvim" },
   config = function()
-    require("todo-ai").setup({
-      pi_provider = "anthropic",
-      pi_model = "sonnet",
-    })
+    require("todo-ai").setup()
   end,
 }
 ```
@@ -83,13 +81,10 @@ Pi manages its own sessions. Close the terminal, reopen with `:TodoAI` — your 
 
 ## Configuration
 
-All settings are optional — omit any to use pi's defaults.
+Provider, model, and thinking are configured through pi itself (see [pi docs](https://github.com/mariozechner/pi-coding-agent)).
 
 ```lua
 require("todo-ai").setup({
-  pi_provider = "anthropic",    -- any pi provider
-  pi_model = "sonnet",          -- model name or pattern
-  pi_thinking = "medium",       -- off, minimal, low, medium, high, xhigh
   pi_extra_args = {},            -- extra CLI args for pi
   pi_position = "right",        -- terminal position: "right" or "left"
   pi_width = 80,                -- terminal width in columns

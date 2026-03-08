@@ -1,9 +1,6 @@
 local M = {}
 
 M.defaults = {
-  pi_provider = nil,
-  pi_model = nil,
-  pi_thinking = nil,
   pi_extra_args = {},
   pi_position = 'right',
   pi_width = 80,
