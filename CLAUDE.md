@@ -20,6 +20,7 @@ todo-ai is a thin Neovim plugin that opens [pi coding agent](https://github.com/
 4. Extension injects editor state + workflow rules on every prompt (`before_agent_start`)
 5. Pi edits files → extension calls `checktime` → buffers reload
 6. Pi MUST call neovim tool: `open_file` for each changed file, then `diff_review`
+7. Pi MUST NOT commit changes — user reviews diff and commits themselves
 
 ### Reconnection
 

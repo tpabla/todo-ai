@@ -69,15 +69,33 @@ function M._read_file(path)
     return (trimmed and trimmed ~= '') and trimmed or nil
 end
 
+function M._clear_pane()
+    M.state.tmux_pane = nil
+    os.remove(M._state_dir() .. '/pane-id')
+end
+
 function M._is_pane_alive()
     local pane_id = M.state.tmux_pane or M._read_file(M._state_dir() .. '/pane-id')
     if not pane_id then return false end
-    local panes = vim.fn.system("tmux list-panes -a -F '#{pane_id}'")
-    if panes:find(pane_id, 1, true) then
-        M.state.tmux_pane = pane_id
-        return true
+
+    -- Check pane exists
+    local dead = vim.trim(vim.fn.system({
+        'tmux', 'display-message', '-t', pane_id, '-p', '#{pane_dead}',
+    }))
+    if vim.v.shell_error ~= 0 then
+        -- Pane doesn't exist
+        M._clear_pane()
+        return false
     end
-    return false
+    if dead == '1' then
+        -- Pane exists but process exited (remain-on-exit)
+        vim.fn.system({ 'tmux', 'kill-pane', '-t', pane_id })
+        M._clear_pane()
+        return false
+    end
+
+    M.state.tmux_pane = pane_id
+    return true
 end
 
 function M._extension_path()
@@ -128,6 +146,7 @@ function M.open_pi(initial_prompt)
         if initial_prompt then
             M._write_prompt(initial_prompt)
         end
+        vim.fn.system({ 'tmux', 'select-pane', '-t', M.state.tmux_pane })
         return
     end
 
@@ -148,13 +167,16 @@ function M.open_pi(initial_prompt)
     end
     local shell_cmd = table.concat(vim.tbl_map(vim.fn.shellescape, parts), ' ')
 
-    local result = vim.fn.system({
+    local result = vim.trim(vim.fn.system({
         'tmux', 'split-window', '-h', '-l', tostring(width),
         '-P', '-F', '#{pane_id}',
         shell_cmd,
-    })
-    M.state.tmux_pane = vim.trim(result)
-    vim.fn.writefile({ M.state.tmux_pane }, dir .. '/pane-id')
+    }))
+    if vim.v.shell_error ~= 0 or not result:match('^%%') then
+        error('todo-ai: failed to create tmux pane: ' .. result)
+    end
+    M.state.tmux_pane = result
+    vim.fn.writefile({ result }, dir .. '/pane-id')
 end
 
 function M.send_prompt(text)

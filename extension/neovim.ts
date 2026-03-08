@@ -1,7 +1,14 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readFileSync, unlinkSync, existsSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  unlinkSync,
+  existsSync,
+  mkdirSync,
+} from "node:fs";
 
 interface NeovimContext {
   current_file?: string;
@@ -14,18 +21,43 @@ interface NeovimContext {
   }>;
 }
 
+// Derive state dir from CWD (same hash as Lua's vim.fn.sha256)
+function deriveStateDir(): string {
+  const cwd = process.cwd();
+  const hash = createHash("sha256").update(cwd).digest("hex").slice(0, 16);
+  return `/tmp/todo-ai-${hash}`;
+}
+
 export default function (pi: ExtensionAPI) {
-  const stateDir = process.env.TODO_AI_STATE_DIR;
+  // Auto-discover state dir: explicit env > derived from CWD
+  const stateDir = process.env.TODO_AI_STATE_DIR || deriveStateDir();
   const tag = process.env.TODO_AI_TAG || "AGENT";
+
+  // Ensure state dir exists
+  try {
+    mkdirSync(stateDir, { recursive: true });
+  } catch {}
+
+  // Write our tmux pane ID so Neovim can find us
+  if (process.env.TMUX) {
+    try {
+      const paneId = execFileSync(
+        "tmux",
+        ["display-message", "-p", "#{pane_id}"],
+        { encoding: "utf-8", timeout: 3000 }
+      ).trim();
+      writeFileSync(`${stateDir}/pane-id`, paneId);
+    } catch {}
+  }
 
   // Mutable — updated when Neovim (re)connects or disconnects
   let nvim: string | null = process.env.NVIM || null;
 
-  const socketFile = stateDir ? `${stateDir}/nvim-socket` : null;
-  const promptFile = stateDir ? `${stateDir}/prompt.md` : null;
+  const socketFile = `${stateDir}/nvim-socket`;
+  const promptFile = `${stateDir}/prompt.md`;
 
   // Try state dir if no $NVIM env
-  if (!nvim && socketFile && existsSync(socketFile)) {
+  if (!nvim && existsSync(socketFile)) {
     nvim = readFileSync(socketFile, "utf-8").trim() || null;
   }
 
@@ -66,44 +98,40 @@ export default function (pi: ExtensionAPI) {
   } | null = null;
 
   // Poll for socket changes (reconnection/disconnect) and prompt files
-  if (stateDir) {
-    const poll = setInterval(() => {
-      // 1. Socket — detect (re)connect / disconnect
-      if (socketFile) {
-        if (existsSync(socketFile)) {
-          try {
-            const socket = readFileSync(socketFile, "utf-8").trim();
-            if (socket && socket !== nvim) {
-              nvim = socket;
-              sessionCtx?.ui.setStatus("nvim", "🟢 nvim");
-            }
-          } catch {}
-        } else if (nvim) {
-          nvim = null;
-          sessionCtx?.ui.setStatus("nvim", "🔴 nvim");
+  const poll = setInterval(() => {
+    // 1. Socket — detect (re)connect / disconnect
+    if (existsSync(socketFile)) {
+      try {
+        const socket = readFileSync(socketFile, "utf-8").trim();
+        if (socket && socket !== nvim) {
+          nvim = socket;
+          sessionCtx?.ui.setStatus("nvim", "🟢 nvim");
         }
-      }
+      } catch {}
+    } else if (nvim) {
+      nvim = null;
+      sessionCtx?.ui.setStatus("nvim", "🔴 nvim");
+    }
 
-      // 2. Prompt file — process prompts sent from Neovim
-      if (promptFile && existsSync(promptFile)) {
-        try {
-          const text = readFileSync(promptFile, "utf-8").trim();
-          unlinkSync(promptFile);
-          if (text === "__SCAN__") {
-            const output = grepTag(tag);
-            if (output) {
-              pi.sendUserMessage(
-                `Resolve these ${tag}: comments:\n\n${output}`
-              );
-            }
-          } else if (text) {
-            pi.sendUserMessage(text);
+    // 2. Prompt file — process prompts sent from Neovim
+    if (existsSync(promptFile)) {
+      try {
+        const text = readFileSync(promptFile, "utf-8").trim();
+        unlinkSync(promptFile);
+        if (text === "__SCAN__") {
+          const output = grepTag(tag);
+          if (output) {
+            pi.sendUserMessage(
+              `Resolve these ${tag}: comments:\n\n${output}`
+            );
           }
-        } catch {}
-      }
-    }, 500);
-    poll.unref();
-  }
+        } else if (text) {
+          pi.sendUserMessage(text);
+        }
+      } catch {}
+    }
+  }, 500);
+  poll.unref();
 
   // Inject editor state and workflow rules before every prompt
   pi.on("before_agent_start", async (event) => {
@@ -140,6 +168,7 @@ export default function (pi: ExtensionAPI) {
       "After editing files, you MUST call the neovim tool with open_file for each changed file.",
       "After ALL edits are complete, you MUST call the neovim tool with diff_review.",
       "Never skip these steps — the user reviews changes in their editor.",
+      "Do NOT commit changes (no git commit). The user reviews the diff and commits themselves.",
     ].join("\n");
 
     return {
@@ -160,6 +189,7 @@ export default function (pi: ExtensionAPI) {
       "After making file changes, you MUST call neovim with open_file for each changed file.",
       "After ALL edits are complete, you MUST call neovim with diff_review.",
       "Never skip these steps — the user reviews changes in their editor.",
+      "Do NOT git commit. The user commits after reviewing the diff.",
     ],
     parameters: Type.Object({
       action: Type.String({ description: "'open_file' or 'diff_review'" }),
