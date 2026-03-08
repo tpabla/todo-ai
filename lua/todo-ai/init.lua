@@ -71,25 +71,20 @@ end
 
 function M._clear_pane()
     M.state.tmux_pane = nil
-    os.remove(M._state_dir() .. '/pane-id')
+    local dir = M._state_dir()
+    os.remove(dir .. '/pane-id')
+    os.remove(dir .. '/prompt.md')
+    os.remove(dir .. '/prompt.md.tmp')
 end
 
 function M._is_pane_alive()
     local pane_id = M.state.tmux_pane or M._read_file(M._state_dir() .. '/pane-id')
     if not pane_id then return false end
 
-    -- Check pane exists
-    local dead = vim.trim(vim.fn.system({
-        'tmux', 'display-message', '-t', pane_id, '-p', '#{pane_dead}',
-    }))
-    if vim.v.shell_error ~= 0 then
-        -- Pane doesn't exist
-        M._clear_pane()
-        return false
-    end
-    if dead == '1' then
-        -- Pane exists but process exited (remain-on-exit)
-        vim.fn.system({ 'tmux', 'kill-pane', '-t', pane_id })
+    -- list-panes is the only reliable check — display-message returns
+    -- exit 0 even for non-existent panes on some tmux versions
+    local panes = vim.fn.system("tmux list-panes -a -F '#{pane_id}'")
+    if not panes:find(pane_id, 1, true) then
         M._clear_pane()
         return false
     end
