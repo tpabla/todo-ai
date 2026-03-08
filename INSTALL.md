@@ -92,6 +92,7 @@ Provider, model, and thinking level are configured through pi directly (see [pi 
 
 ```lua
 require("todo-ai").setup({
+  tag = "AGENT",                 -- Comment tag for scanning (AGENT:)
   pi_extra_args = {},            -- Additional CLI args passed to pi
                                  --   { "--no-session" }  ephemeral mode
   pi_width = 80,                -- Tmux pane width in columns
@@ -172,11 +173,12 @@ Install pi: `npm install -g @mariozechner/pi-coding-agent`
 
 ### No `🟢 nvim` in pi's footer
 
-The extension isn't loading. Check:
+The extension isn't loading or can't find Neovim. Check:
 
 - Extension file exists: the plugin ships it at `extension/neovim.ts`
+- Neovim has called `setup()` (writes socket to state dir)
+- If pi was started outside `:TodoAI`, run it in the same CWD as Neovim — the extension auto-discovers the socket via matching CWD hash
 - Test manually: `NVIM=/tmp/nvimXXXX/0 pi -e /path/to/todo-ai/extension/neovim.ts`
-- The `$NVIM` variable is set — todo-ai passes this automatically via tmux
 
 ### Buffers not reloading after edits
 

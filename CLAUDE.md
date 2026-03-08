@@ -6,7 +6,7 @@ todo-ai is a thin Neovim plugin that opens [pi coding agent](https://github.com/
 
 ### Components
 
-- **`extension/neovim.ts`** — Pi extension: context injection via `$NVIM` socket, neovim tool, buffer reload, `/scan` and `/nvim` commands
+- **`extension/neovim.ts`** — Pi extension: context injection via `$NVIM` socket, neovim tool, buffer reload, `/scan` command, prompt file polling
 - **`lua/todo-ai/init.lua`** — Tmux pane management (open, reuse, focus) + remote functions the extension calls via `nvim --server`
 - **`lua/todo-ai/visual.lua`** — Visual selection capture → prompt
 - **`lua/todo-ai/config.lua`** — Configuration
@@ -19,15 +19,20 @@ todo-ai is a thin Neovim plugin that opens [pi coding agent](https://github.com/
 3. Extension polls state dir: socket changes → 🟢/🔴, prompt files → `sendUserMessage`
 4. Extension injects editor state + workflow rules on every prompt (`before_agent_start`)
 5. Pi edits files → extension calls `checktime` → buffers reload
-6. Pi MUST call neovim tool: `open_file` for each changed file, then `diff_review`
-7. Pi MUST NOT commit changes — user reviews diff and commits themselves
+6. Pi MUST call neovim tool with `diff_review` after all edits are complete
+7. Pi uses `open_file` only when referencing specific code during conversation
+8. Pi MUST NOT commit changes — user reviews diff and commits themselves
 
 ### Reconnection
 
 - CWD anchors pi to a project: `/tmp/todo-ai-<sha256(cwd)[:16]>/`
 - State dir stores: `nvim-socket`, `pane-id`, `prompt.md`
 - Neovim writes socket on `setup()`, removes on `VimLeavePre`
+- Extension auto-derives state dir from CWD (same hash) if `TODO_AI_STATE_DIR` not set
+- Extension writes its own `pane-id` on startup — pi started outside `:TodoAI` is still discoverable
 - Extension polls every 500ms — detects connect/disconnect without restart
+- Pane liveness checked via `tmux list-panes` (not `display-message` — exits 0 for dead panes)
+- Dead panes trigger `_clear_pane()` which removes stale `pane-id` and `prompt.md` files
 - Multiple projects = multiple pi instances, no conflicts
 
 ## Principles
@@ -37,6 +42,7 @@ todo-ai is a thin Neovim plugin that opens [pi coding agent](https://github.com/
 - **No reimplementing pi.** Sessions, streaming, retries, tools — all pi's job.
 - **Fail fast.** No silent fallbacks or error recovery. `error()` not `vim.notify`.
 - **Tmux required.** No fallback to Neovim terminal buffers.
+- **Never commit.** Pi must not run `git commit`. User reviews diff and commits themselves.
 
 ## Code guidelines
 

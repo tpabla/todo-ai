@@ -86,6 +86,8 @@ Pi manages sessions natively. `:TodoAI` always passes `--resume` so you can pick
 
 If pi is already running for your project (same CWD), `:TodoAI` reconnects to it instead of spawning a new instance. Close Neovim → pi shows 🔴. Reopen Neovim → pi goes 🟢 automatically.
 
+Pi started independently (not through `:TodoAI`) also works — the extension auto-discovers Neovim's socket via CWD hash. Just run pi with the extension in the same directory as Neovim.
+
 ## Configuration
 
 Provider, model, and thinking are configured through pi directly — see [pi docs](https://github.com/mariozechner/pi-coding-agent). The settings below are todo-ai-specific:
@@ -100,7 +102,7 @@ require("todo-ai").setup({
 
 ## What the extension does
 
-The [pi extension](extension/neovim.ts) (~240 lines of TypeScript):
+The [pi extension](extension/neovim.ts) (~280 lines of TypeScript):
 
 | Hook | What it does |
 |------|-------------|

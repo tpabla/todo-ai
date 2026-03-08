@@ -165,9 +165,9 @@ export default function (pi: ExtensionAPI) {
     if (parts.length === 0) return;
 
     const workflow = [
-      "After editing files, you MUST call the neovim tool with open_file for each changed file.",
       "After ALL edits are complete, you MUST call the neovim tool with diff_review.",
-      "Never skip these steps — the user reviews changes in their editor.",
+      "Use open_file only when referencing specific code during conversation, not as a final step.",
+      "Never skip diff_review — the user reviews changes in their editor.",
       "Do NOT commit changes (no git commit). The user reviews the diff and commits themselves.",
     ].join("\n");
 
@@ -186,9 +186,8 @@ export default function (pi: ExtensionAPI) {
     description:
       "Interact with the host Neovim editor. Open files at specific lines or trigger a diff review of all changes.",
     promptGuidelines: [
-      "After making file changes, you MUST call neovim with open_file for each changed file.",
       "After ALL edits are complete, you MUST call neovim with diff_review.",
-      "Never skip these steps — the user reviews changes in their editor.",
+      "Use open_file when referencing specific code during conversation, not as a routine final step.",
       "Do NOT git commit. The user commits after reviewing the diff.",
     ],
     parameters: Type.Object({
