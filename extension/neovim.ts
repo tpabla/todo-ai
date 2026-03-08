@@ -1,0 +1,212 @@
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
+import { execFileSync } from "node:child_process";
+import { readFileSync, unlinkSync, existsSync } from "node:fs";
+
+interface NeovimContext {
+  current_file?: string;
+  cursor_line?: number;
+  open_files: string[];
+  diagnostics?: Array<{
+    line: number;
+    severity: string;
+    message: string;
+  }>;
+}
+
+export default function (pi: ExtensionAPI) {
+  const nvim = process.env.NVIM;
+  if (!nvim) return;
+
+  function nvimExec(luaCode: string): void {
+    const escaped = luaCode.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    execFileSync(
+      "nvim",
+      ["--server", nvim, "--remote-expr", `execute("lua ${escaped}")`],
+      { timeout: 5000 }
+    );
+  }
+
+  function nvimEval(luaExpr: string): string {
+    const escaped = luaExpr.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return execFileSync(
+      "nvim",
+      ["--server", nvim, "--remote-expr", `luaeval("${escaped}")`],
+      { timeout: 3000, encoding: "utf-8" }
+    ).trim();
+  }
+
+  function getContext(): NeovimContext | null {
+    try {
+      return JSON.parse(nvimEval("require('todo-ai').remote_get_context()"));
+    } catch {
+      return null;
+    }
+  }
+
+  // Inject live Neovim editor state before every prompt
+  pi.on("before_agent_start", async (event) => {
+    const ctx = getContext();
+    if (!ctx) return;
+
+    const parts: string[] = [];
+
+    if (ctx.current_file) {
+      parts.push(
+        `Current file: ${ctx.current_file} (line ${ctx.cursor_line || 1})`
+      );
+    }
+
+    if (ctx.open_files.length > 0) {
+      parts.push(
+        `Open buffers:\n${ctx.open_files.map((f) => `  ${f}`).join("\n")}`
+      );
+    }
+
+    if (ctx.diagnostics && ctx.diagnostics.length > 0) {
+      parts.push(
+        `LSP diagnostics:\n${ctx.diagnostics
+          .map((d) => `  Line ${d.line}: [${d.severity}] ${d.message}`)
+          .join("\n")}`
+      );
+    }
+
+    if (parts.length === 0) return;
+
+    return {
+      systemPrompt:
+        event.systemPrompt +
+        `\n\n<neovim_editor_state>\n${parts.join("\n\n")}\n</neovim_editor_state>`,
+    };
+  });
+
+  // Tool: open files in Neovim editor, trigger diff review
+  pi.registerTool({
+    name: "neovim",
+    label: "Neovim",
+    description:
+      "Interact with the host Neovim editor. Open files at specific lines or trigger a diff review of all changes.",
+    promptGuidelines: [
+      "After making file changes, call neovim with diff_review so the user can review.",
+      "When referencing specific code, call neovim with open_file to show it in the editor.",
+    ],
+    parameters: Type.Object({
+      action: Type.String({ description: "'open_file' or 'diff_review'" }),
+      path: Type.Optional(
+        Type.String({ description: "File path (for open_file)" })
+      ),
+      line: Type.Optional(
+        Type.Number({ description: "Line number (for open_file)" })
+      ),
+    }),
+    async execute(toolCallId, params) {
+      try {
+        if (params.action === "open_file") {
+          if (!params.path) return ok("Error: path required");
+          const safePath = params.path.replace(/'/g, "\\'");
+          const line = params.line || 1;
+          nvimExec(
+            `require('todo-ai').remote_open('${safePath}', ${line})`
+          );
+          return ok(`Opened ${params.path} at line ${line}`);
+        }
+
+        if (params.action === "diff_review") {
+          nvimExec("require('todo-ai').remote_diff_review()");
+          return ok("Opened diff review in Neovim");
+        }
+
+        return ok(`Unknown action: ${params.action}`);
+      } catch (e: any) {
+        return ok(`Error: ${e.message || e}`);
+      }
+    },
+  });
+
+  // Auto-reload buffers in Neovim after pi edits files
+  pi.on("tool_execution_end", async (event) => {
+    if (event.toolName === "edit" || event.toolName === "write") {
+      try {
+        nvimExec("vim.cmd('checktime')");
+      } catch {}
+    }
+  });
+
+  // /nvim — process a prompt sent programmatically from Neovim
+  pi.registerCommand("nvim", {
+    description: "Process a prompt from Neovim (reads /tmp/todo-ai-prompt.md)",
+    handler: async (args, ctx) => {
+      const file = (args || "").trim() || "/tmp/todo-ai-prompt.md";
+      if (!existsSync(file)) {
+        ctx.ui.notify("No prompt file found", "error");
+        return;
+      }
+      try {
+        const text = readFileSync(file, "utf-8");
+        try {
+          unlinkSync(file);
+        } catch {}
+        await ctx.waitForIdle();
+        pi.sendUserMessage(text);
+      } catch (e: any) {
+        ctx.ui.notify(`Failed: ${e.message}`, "error");
+      }
+    },
+  });
+
+  // /scan — find TODO: @ai comments and resolve them
+  pi.registerCommand("scan", {
+    description: "Find TODO: @ai comments in the project and resolve them",
+    handler: async (args, ctx) => {
+      try {
+        const output = execFileSync(
+          "grep",
+          [
+            "-rn",
+            "TODO:.*@ai",
+            ".",
+            "--include=*.lua",
+            "--include=*.ts",
+            "--include=*.tsx",
+            "--include=*.js",
+            "--include=*.jsx",
+            "--include=*.py",
+            "--include=*.go",
+            "--include=*.rs",
+            "--include=*.c",
+            "--include=*.cpp",
+            "--include=*.h",
+            "--include=*.java",
+            "--include=*.rb",
+            "--include=*.php",
+            "--exclude-dir=node_modules",
+            "--exclude-dir=.git",
+            "--exclude-dir=target",
+            "--exclude-dir=dist",
+            "--exclude-dir=build",
+            "--exclude-dir=.venv",
+          ],
+          { timeout: 10000, encoding: "utf-8" }
+        );
+
+        if (output.trim()) {
+          pi.sendUserMessage(
+            `Resolve these TODO: @ai comments:\n\n${output.trim()}`
+          );
+        } else {
+          ctx.ui.notify("No TODO: @ai comments found", "info");
+        }
+      } catch {
+        ctx.ui.notify("No TODO: @ai comments found", "info");
+      }
+    },
+  });
+
+  pi.on("session_start", async (_event, ctx) => {
+    ctx.ui.setStatus("nvim", "🟢 nvim");
+  });
+}
+
+function ok(text: string) {
+  return { content: [{ type: "text" as const, text }], details: {} };
+}

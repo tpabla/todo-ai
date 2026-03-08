@@ -1,24 +1,19 @@
 #!/bin/bash
-# Find exported Lua functions that are never called from anywhere.
-cd "$(git rev-parse --show-toplevel)"
+# Find potentially dead Lua functions (public API only — skips _private functions)
+cd "$(dirname "$0")/.." || exit 1
 
-found=0
-for f in lua/todo-ai/*.lua; do
-  mod=$(basename "$f" .lua)
-  while IFS= read -r fn; do
-    [ -z "$fn" ] && continue
-    # Count references outside the definition line
-    refs=$(rg -c -g "*.lua" -g "*.vim" "\.$fn\b" lua/ plugin/ tests/ 2>/dev/null \
-      | awk -F: '{s+=$2}END{print s+0}')
-    # Subtract 1 for the definition itself
-    refs=$((refs - 1))
-    if [ "$refs" -le "0" ]; then
-      echo "  DEAD: $mod.$fn"
-      found=1
+echo "Checking for dead Lua functions..."
+
+for file in lua/todo-ai/*.lua; do
+  module=$(basename "$file" .lua)
+  # Only check public functions (not prefixed with _)
+  grep -o 'function M\.[a-zA-Z_]*' "$file" | sed 's/function M\.//' | while read -r func; do
+    case "$func" in _*) continue ;; esac
+    count=$(grep -r --include='*.lua' --include='*.vim' --include='*.ts' \
+      "$func" lua/ plugin/ extension/ tests/ 2>/dev/null \
+      | grep -v "^${file}:" | grep -cv "^[[:space:]]*--")
+    if [ "$count" -eq 0 ]; then
+      echo "  DEAD: ${module}.${func}"
     fi
-  done < <(sed -n 's/^function M\.\([a-zA-Z_]*\).*/\1/p' "$f")
+  done
 done
-
-if [ "$found" -eq "0" ]; then
-  echo "  No dead code found. ✓"
-fi

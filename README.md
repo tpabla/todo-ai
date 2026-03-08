@@ -1,48 +1,39 @@
-# 🤖 TodoAI - AI-Powered Code Assistant for Neovim
+# todo-ai
 
-A Neovim plugin that wraps the [pi coding agent](https://github.com/mariozechner/pi-coding-agent) with a vim-native chat UI, TODO scanning, and Neovim context injection. Pi handles all file editing — you review changes with [diffview.nvim](https://github.com/sindrets/diffview.nvim).
+Neovim + [pi coding agent](https://github.com/mariozechner/pi-coding-agent). Pi runs in a terminal pane with full access to your editor state — open files, cursor position, LSP diagnostics. It edits files directly; you review with [diffview.nvim](https://github.com/sindrets/diffview.nvim).
 
 ## How it works
 
 ```
-Neovim (todo-ai)                    pi (RPC subprocess)
-┌──────────────┐                   ┌──────────────────┐
-│ Chat buffer  │──── prompt ──────→│                  │
-│              │←── streaming ─────│  LLM + Tools     │
-│ TODO scanner │                   │  (read, write,   │
-│ Open buffers │                   │   edit, bash)    │
-│ LSP diags    │                   │                  │
-└──────────────┘                   └──────────────────┘
-                                          │
-                                    edits files on disk
-                                          │
-                                    :DiffviewOpen to review
+┌──────────────────────────────────────────────────────┐
+│ Neovim                                               │
+│                                                      │
+│  ┌──────────────────┐    ┌─────────────────────────┐ │
+│  │ Code buffers      │◄──│ pi (terminal pane)      │ │
+│  │                   │   │                         │ │
+│  │ • current file    │──►│ • reads editor state    │ │
+│  │ • cursor position │   │ • edits files directly  │ │
+│  │ • open buffers    │   │ • runs shell commands   │ │
+│  │ • LSP diagnostics │   │ • opens files in editor │ │
+│  │                   │   │ • triggers diff review  │ │
+│  │ :DiffviewOpen ◄───│───│                         │ │
+│  └──────────────────┘    └─────────────────────────┘ │
+│                                                      │
+└──────────────────────────────────────────────────────┘
 ```
 
-**Todo-ai gathers context from Neovim** (open buffers, LSP diagnostics, project structure, TODO comments) and sends it to pi. **Pi does the actual work** — reading files, making edits, running commands. You review changes with diffview and commit when satisfied.
+The Neovim plugin is ~60 lines of Lua. All intelligence lives in pi and its [extension](extension/neovim.ts).
 
-## ✨ Features
+## Install
 
-- **💬 Chat UI**: Vim-native buffer — type, `:w` to send, streaming responses
-- **📝 TODO Scanning**: Detects `TODO: @ai` comments and sends them to pi for resolution
-- **🔍 Context Injection**: Open buffer paths, LSP diagnostics, and project context included automatically
-- **👁️ Visual Mode**: Select code, describe what you want, pi handles it
-- **⚡ Streaming**: Live response display as pi generates output
-- **🔧 Tool Feedback**: See what pi is doing — editing files, running commands, reading code
+See **[INSTALL.md](INSTALL.md)** for detailed setup.
 
-## 📦 Installation
-
-Requires [pi coding agent](https://github.com/mariozechner/pi-coding-agent) (`npm install -g @mariozechner/pi-coding-agent`).
-
-### Using [lazy.nvim](https://github.com/folke/lazy.nvim)
+**Quick start** — requires [pi](https://github.com/mariozechner/pi-coding-agent) (`npm i -g @mariozechner/pi-coding-agent`):
 
 ```lua
+-- lazy.nvim
 {
   "tpabla/todo-ai",
-  dependencies = {
-    "nvim-lua/plenary.nvim",
-    "sindrets/diffview.nvim",  -- optional, for reviewing changes
-  },
   config = function()
     require("todo-ai").setup({
       pi_provider = "anthropic",
@@ -52,123 +43,103 @@ Requires [pi coding agent](https://github.com/mariozechner/pi-coding-agent) (`np
 }
 ```
 
-## 🔧 Configuration
+## Usage
+
+| Key | Command | Description |
+|-----|---------|-------------|
+| `<leader>tc` | `:TodoAI` | Open/show pi terminal |
+| `<leader>tf` | `:TodoAIFocus` | Focus pi terminal |
+| `<leader>ti` | `:TodoAIVisual` | Send visual selection to pi |
+
+### Workflow
+
+1. `:TodoAI` — opens pi in a right split
+2. Type your request in pi's TUI
+3. Pi reads files, makes edits, runs commands
+4. Pi opens relevant files in your editor and triggers diff review
+5. Review with `:DiffviewOpen`, commit or revert
+
+### Between prompts
+
+Open files, navigate code, trigger LSP — the extension queries your editor state fresh on every prompt. Pi always sees what you're currently looking at.
+
+### Visual mode
+
+Select code → `<leader>ti` → type instruction → pi processes it in context.
+
+### TODO scanning
+
+```python
+# TODO: @ai add input validation
+def process(data):
+    return data.upper()
+```
+
+In pi's terminal, type `/scan` — finds all `TODO: @ai` comments across the project and resolves them.
+
+### Session persistence
+
+Pi manages its own sessions. Close the terminal, reopen with `:TodoAI` — your conversation is there. Use `/resume` in pi to switch between sessions, or add `--continue` to `pi_extra_args` to auto-resume.
+
+## Configuration
+
+All settings are optional — omit any to use pi's defaults.
 
 ```lua
-require('todo-ai').setup({
-  -- Pi settings (all optional — uses pi defaults if omitted)
-  pi_provider = 'anthropic',     -- any pi provider: anthropic, openai, google, ollama, etc.
-  pi_model = 'sonnet',           -- model name or pattern
-  pi_thinking = 'medium',        -- off, minimal, low, medium, high
-  pi_system_prompt = nil,        -- appended to pi's system prompt
-  pi_extra_args = {},             -- additional CLI args for pi
+require("todo-ai").setup({
+  pi_provider = "anthropic",    -- any pi provider
+  pi_model = "sonnet",          -- model name or pattern
+  pi_thinking = "medium",       -- off, minimal, low, medium, high, xhigh
+  pi_extra_args = {},            -- extra CLI args for pi
+  pi_position = "right",        -- terminal position: "right" or "left"
+  pi_width = 80,                -- terminal width in columns
 
-  -- Plugin behavior
-  auto_scan = false,              -- auto-scan for TODOs on save
-
-  -- UI
-  chat_window_width = 60,
-  chat_window_position = 'right', -- right, left, bottom
-
-  -- @ai tag highlighting
-  ai_highlight = {
+  ai_highlight = {               -- @ai tag highlighting
     enabled = true,
-    fg = '#ff79c6',
-    bg = '#1a1a2e',
+    fg = "#ff79c6",
+    bg = "#1a1a2e",
     bold = true,
   },
 })
 ```
 
-## 🎮 Usage
+## What the extension does
 
-### Keybindings
+The [pi extension](extension/neovim.ts) (~170 lines of TypeScript):
 
-| Key | Command | Description |
-|-----|---------|-------------|
-| `<leader>tc` | `:TodoAIChat` | Open chat |
-| `<leader>ts` | `:TodoAIScan` | Scan buffer for `TODO: @ai` |
-| `<leader>tS` | `:TodoAIScanProject` | Scan project for TODOs |
-| `<leader>ti` | `:TodoAIVisual` | Process visual selection |
-| `<leader>tx` | `:TodoAIAbort` | Abort current pi operation |
-| `<leader>tg` | `:TodoAIGenerateContext` | Generate project context |
+| Hook | What it does |
+|------|-------------|
+| `before_agent_start` | Queries Neovim for current file, cursor, open buffers, LSP diagnostics. Injected fresh on every prompt. |
+| `neovim` tool | Pi can open files at specific lines and trigger `:DiffviewOpen` in your editor. |
+| `tool_execution_end` | Calls `:checktime` after edits so buffers reload automatically. |
+| `/scan` command | Greps for `TODO: @ai` and sends matches to pi for resolution. |
+| `/nvim` command | Reads prompts sent programmatically from the Neovim plugin. |
 
-### Chat
-
-1. `<leader>tc` opens the chat buffer
-2. Type your message
-3. `:w` or `Enter` sends it
-4. Pi streams its response and edits files directly
-5. `:DiffviewOpen` to review changes, `git checkout -- .` to revert
-
-### TODO Scanning
-
-```python
-# TODO: @ai Add error handling for API calls
-def fetch_data(url):
-    return requests.get(url).json()
-```
-
-`<leader>ts` finds the TODO, sends it to pi with file context. Pi edits the file directly.
-
-### Visual Mode
-
-Select code → `<leader>ti` → type instruction → pi processes it.
-
-## 🛠️ Development
-
-### Project Structure
+## Project structure
 
 ```
 todo-ai/
+├── extension/neovim.ts      # Pi extension — context, tools, commands
 ├── lua/todo-ai/
-│   ├── init.lua              # Setup, commands, TODO processing
-│   ├── pi_client.lua         # Pi RPC client (spawn, send, receive)
-│   ├── chat.lua              # Chat buffer UI with streaming
-│   ├── context.lua           # Neovim context gathering
-│   ├── scanner.lua           # TODO: @ai detection
-│   ├── visual.lua            # Visual mode processing
-│   ├── config.lua            # Configuration
-│   ├── context_compact.lua   # Project context generation
-│   ├── integrations.lua      # Optional plugin integrations
-│   ├── dry_tagger.lua        # DRY tag suggestions
-│   └── logger.lua            # Debug logging
-├── plugin/todo-ai.vim        # Vim commands & keymaps
-├── tests/                    # Plenary.nvim tests
-├── scripts/find_dead_code.sh # Dead code detection
+│   ├── init.lua             # Terminal management + remote functions
+│   ├── visual.lua           # Visual selection → prompt
+│   └── config.lua           # Configuration
+├── plugin/todo-ai.vim       # Commands + keymaps
+├── tests/plenary/           # Tests
+├── INSTALL.md
 └── Makefile
 ```
 
-### Make Targets
+## Development
 
-```bash
-make test            # Run all tests
-make test-single FILE=tests/plenary/some_spec.lua
-make lint            # Find dead Lua code
-make install         # Install to Neovim packages dir
-make dev             # Symlink for development
-make help            # Show all targets
+```
+make test             Run tests
+make test-single FILE=...   Run one test file
+make lint             Find dead Lua code
+make dev              Symlink for development
+make install          Install to Neovim packages
 ```
 
-### Debug Logging
-
-```vim
-:TodoAILogs
-" or
-tail -f /tmp/todo-ai.log
-```
-
-## Dependencies
-
-- **Required**: [pi coding agent](https://github.com/mariozechner/pi-coding-agent)
-- **Required**: [plenary.nvim](https://github.com/nvim-lua/plenary.nvim) (for tests)
-- **Optional**: [diffview.nvim](https://github.com/sindrets/diffview.nvim) (for reviewing changes)
-- **Optional**: [render-markdown.nvim](https://github.com/MeanderingProgrammer/markdown.nvim) (chat formatting)
-
-## 📄 License
+## License
 
 MIT
-
-## 🙏 Credits
-
-**Built on**: [pi coding agent](https://github.com/mariozechner/pi-coding-agent), [Neovim](https://neovim.io/), [Plenary.nvim](https://github.com/nvim-lua/plenary.nvim)
