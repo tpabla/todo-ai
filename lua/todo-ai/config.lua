@@ -2,14 +2,7 @@ local M = {}
 
 M.defaults = {
   pi_extra_args = {},
-  pi_position = 'right',
   pi_width = 80,
-  ai_highlight = {
-    enabled = true,
-    fg = '#ff79c6',
-    bg = '#1a1a2e',
-    bold = true,
-  },
 }
 
 M.config = {}

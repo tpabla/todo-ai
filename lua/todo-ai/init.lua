@@ -17,18 +17,6 @@ function M.setup(opts)
     group = vim.api.nvim_create_augroup('TodoAI', { clear = true }),
     callback = function() vim.cmd('silent! checktime') end,
   })
-
-  local hl = config.get('ai_highlight')
-  if hl and hl.enabled then
-    vim.api.nvim_set_hl(0, 'TodoAI', { fg = hl.fg, bg = hl.bg, bold = hl.bold })
-    vim.api.nvim_create_autocmd({ 'BufEnter', 'TextChanged', 'TextChangedI' }, {
-      group = vim.api.nvim_create_augroup('TodoAI_Highlight', { clear = true }),
-      pattern = '*',
-      callback = function()
-        pcall(vim.fn.matchadd, 'TodoAI', '@ai.*', 10, -1)
-      end,
-    })
-  end
 end
 
 -- Tmux pane management --------------------------------------------------------
@@ -49,27 +37,14 @@ function M._extension_path()
   return plugin_root .. '/extension/neovim.ts'
 end
 
+function M._prompt_file()
+  return '/tmp/todo-ai-prompt-' .. vim.fn.getpid() .. '.md'
+end
+
 function M._build_cmd(initial_prompt)
-  local cmd = { 'pi' }
+  local cmd = { 'pi', '-e', M._extension_path(), '--resume' }
+
   local cfg = config.config
-
-  if cfg.pi_provider then
-    table.insert(cmd, '--provider')
-    table.insert(cmd, cfg.pi_provider)
-  end
-  if cfg.pi_model then
-    table.insert(cmd, '--model')
-    table.insert(cmd, cfg.pi_model)
-  end
-  if cfg.pi_thinking then
-    table.insert(cmd, '--thinking')
-    table.insert(cmd, cfg.pi_thinking)
-  end
-
-  table.insert(cmd, '-e')
-  table.insert(cmd, M._extension_path())
-  table.insert(cmd, '--resume')
-
   if cfg.pi_extra_args then
     for _, arg in ipairs(cfg.pi_extra_args) do
       table.insert(cmd, arg)
@@ -99,8 +74,8 @@ function M.open_pi(initial_prompt)
   local socket = vim.v.servername
   local width = config.get('pi_width') or 80
 
-  -- env NVIM=<socket> pi [args...]
-  local parts = { 'env', 'NVIM=' .. socket }
+  -- env NVIM=<socket> TODO_AI_PROMPT=<file> pi [args...]
+  local parts = { 'env', 'NVIM=' .. socket, 'TODO_AI_PROMPT=' .. M._prompt_file() }
   for _, arg in ipairs(cmd) do
     table.insert(parts, arg)
   end
@@ -119,15 +94,14 @@ function M.send_prompt(text)
     M.open_pi(text)
     return
   end
-  local tmpfile = '/tmp/todo-ai-prompt-' .. vim.fn.getpid() .. '.md'
-  local f = io.open(tmpfile, 'w')
-  if not f then error('Failed to write ' .. tmpfile) end
+  -- Atomic write: stage then rename (extension polls for this file)
+  local tmpfile = M._prompt_file()
+  local staging = tmpfile .. '.tmp'
+  local f = io.open(staging, 'w')
+  if not f then error('Failed to write ' .. staging) end
   f:write(text)
   f:close()
-  vim.fn.system({
-    'tmux', 'send-keys', '-t', M.state.tmux_pane,
-    '/nvim ' .. tmpfile, 'Enter',
-  })
+  os.rename(staging, tmpfile)
 end
 
 function M.focus_pi()
@@ -155,7 +129,6 @@ end
 function M.remote_get_context()
   local ctx = { open_files = {} }
 
-  -- Current window's file and cursor
   local win = vim.api.nvim_get_current_win()
   local buf = vim.api.nvim_win_get_buf(win)
   local name = vim.api.nvim_buf_get_name(buf)
@@ -176,7 +149,6 @@ function M.remote_get_context()
     end
   end
 
-  -- All open file buffers
   for _, b in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(b) and vim.bo[b].buflisted and vim.bo[b].buftype == '' then
       local n = vim.api.nvim_buf_get_name(b)

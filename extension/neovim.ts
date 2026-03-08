@@ -18,6 +18,8 @@ export default function (pi: ExtensionAPI) {
   const nvim = process.env.NVIM;
   if (!nvim) return;
 
+  const promptFile = process.env.TODO_AI_PROMPT;
+
   function nvimExec(luaCode: string): void {
     const escaped = luaCode.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     execFileSync(
@@ -42,6 +44,28 @@ export default function (pi: ExtensionAPI) {
     } catch {
       return null;
     }
+  }
+
+  // Poll for prompts sent from Neovim (visual selection, etc.)
+  // Neovim does an atomic write (rename), so no partial reads.
+  if (promptFile) {
+    // Clean up stale file from a previous session
+    if (existsSync(promptFile)) {
+      try {
+        unlinkSync(promptFile);
+      } catch {}
+    }
+    const poll = setInterval(() => {
+      if (!existsSync(promptFile)) return;
+      try {
+        const text = readFileSync(promptFile, "utf-8");
+        unlinkSync(promptFile);
+        if (text.trim()) {
+          pi.sendUserMessage(text);
+        }
+      } catch {}
+    }, 300);
+    poll.unref();
   }
 
   // Inject live Neovim editor state before every prompt
@@ -132,71 +156,16 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // /nvim — process a prompt sent programmatically from Neovim
-  pi.registerCommand("nvim", {
-    description: "Process a prompt from Neovim (reads /tmp/todo-ai-prompt.md)",
-    handler: async (args, ctx) => {
-      const file = (args || "").trim() || "/tmp/todo-ai-prompt.md";
-      if (!existsSync(file)) {
-        ctx.ui.notify("No prompt file found", "error");
-        return;
-      }
-      try {
-        const text = readFileSync(file, "utf-8");
-        try {
-          unlinkSync(file);
-        } catch {}
-        await ctx.waitForIdle();
-        pi.sendUserMessage(text);
-      } catch (e: any) {
-        ctx.ui.notify(`Failed: ${e.message}`, "error");
-      }
-    },
-  });
-
   // /scan — find TODO: @ai comments and resolve them
   pi.registerCommand("scan", {
     description: "Find TODO: @ai comments in the project and resolve them",
     handler: async (args, ctx) => {
-      try {
-        const output = execFileSync(
-          "grep",
-          [
-            "-rn",
-            "TODO:.*@ai",
-            ".",
-            "--include=*.lua",
-            "--include=*.ts",
-            "--include=*.tsx",
-            "--include=*.js",
-            "--include=*.jsx",
-            "--include=*.py",
-            "--include=*.go",
-            "--include=*.rs",
-            "--include=*.c",
-            "--include=*.cpp",
-            "--include=*.h",
-            "--include=*.java",
-            "--include=*.rb",
-            "--include=*.php",
-            "--exclude-dir=node_modules",
-            "--exclude-dir=.git",
-            "--exclude-dir=target",
-            "--exclude-dir=dist",
-            "--exclude-dir=build",
-            "--exclude-dir=.venv",
-          ],
-          { timeout: 10000, encoding: "utf-8" }
+      const output = grepTodos();
+      if (output) {
+        pi.sendUserMessage(
+          `Resolve these TODO: @ai comments:\n\n${output}`
         );
-
-        if (output.trim()) {
-          pi.sendUserMessage(
-            `Resolve these TODO: @ai comments:\n\n${output.trim()}`
-          );
-        } else {
-          ctx.ui.notify("No TODO: @ai comments found", "info");
-        }
-      } catch {
+      } else {
         ctx.ui.notify("No TODO: @ai comments found", "info");
       }
     },
@@ -205,6 +174,33 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     ctx.ui.setStatus("nvim", "🟢 nvim");
   });
+}
+
+// Prefer rg (respects .gitignore), fall back to grep
+function grepTodos(): string {
+  try {
+    return execFileSync("rg", ["-n", "TODO:.*@ai", "."], {
+      timeout: 10000,
+      encoding: "utf-8",
+    }).trim();
+  } catch (e: any) {
+    if (e.code !== "ENOENT") return ""; // rg exists but no matches
+  }
+  try {
+    return execFileSync(
+      "grep",
+      [
+        "-rn",
+        "TODO:.*@ai",
+        ".",
+        "--exclude-dir=node_modules",
+        "--exclude-dir=.git",
+      ],
+      { timeout: 10000, encoding: "utf-8" }
+    ).trim();
+  } catch {
+    return "";
+  }
 }
 
 function ok(text: string) {

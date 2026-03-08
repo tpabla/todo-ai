@@ -93,15 +93,7 @@ Provider, model, and thinking are configured through pi directly — see [pi doc
 ```lua
 require("todo-ai").setup({
   pi_extra_args = {},            -- extra CLI args passed to pi
-  pi_position = "right",        -- tmux pane position: "right" or "left"
   pi_width = 80,                -- tmux pane width in columns
-
-  ai_highlight = {               -- @ai tag highlighting
-    enabled = true,
-    fg = "#ff79c6",
-    bg = "#1a1a2e",
-    bold = true,
-  },
 })
 ```
 
@@ -114,8 +106,8 @@ The [pi extension](extension/neovim.ts) (~170 lines of TypeScript):
 | `before_agent_start` | Queries Neovim via `$NVIM` socket for current file, cursor, open buffers, LSP diagnostics. Injected fresh on every prompt. |
 | `neovim` tool | Pi can open files at specific lines and trigger `:DiffviewOpen`. |
 | `tool_execution_end` | Calls `:checktime` after edits so buffers reload. |
-| `/scan` command | Greps for `TODO: @ai` and sends matches to pi. |
-| `/nvim` command | Reads prompts sent from Neovim (visual selection, etc.). |
+| `/scan` command | Greps for `TODO: @ai` (uses `rg` if available) and sends matches to pi. |
+| Prompt polling | Watches for prompt files from Neovim (visual selection, etc.). No keystroke injection. |
 
 ## Project structure
 

@@ -94,16 +94,7 @@ Provider, model, and thinking level are configured through pi directly (see [pi 
 require("todo-ai").setup({
   pi_extra_args = {},            -- Additional CLI args passed to pi
                                  --   { "--no-session" }  ephemeral mode
-
-  pi_position = "right",        -- Tmux pane position: "right" or "left"
   pi_width = 80,                -- Tmux pane width in columns
-
-  ai_highlight = {               -- @ai tag highlighting
-    enabled = true,
-    fg = "#ff79c6",
-    bg = "#1a1a2e",
-    bold = true,
-  },
 })
 ```
 
