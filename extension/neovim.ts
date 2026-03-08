@@ -15,13 +15,22 @@ interface NeovimContext {
 }
 
 export default function (pi: ExtensionAPI) {
-  const nvim = process.env.NVIM;
-  if (!nvim) return;
-
-  const promptFile = process.env.TODO_AI_PROMPT;
+  const stateDir = process.env.TODO_AI_STATE_DIR;
   const tag = process.env.TODO_AI_TAG || "AGENT";
 
+  // Mutable — updated when Neovim (re)connects or disconnects
+  let nvim: string | null = process.env.NVIM || null;
+
+  const socketFile = stateDir ? `${stateDir}/nvim-socket` : null;
+  const promptFile = stateDir ? `${stateDir}/prompt.md` : null;
+
+  // Try state dir if no $NVIM env
+  if (!nvim && socketFile && existsSync(socketFile)) {
+    nvim = readFileSync(socketFile, "utf-8").trim() || null;
+  }
+
   function nvimExec(luaCode: string): void {
+    if (!nvim) throw new Error("Neovim not connected");
     const escaped = luaCode.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     execFileSync(
       "nvim",
@@ -31,6 +40,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   function nvimEval(luaExpr: string): string {
+    if (!nvim) throw new Error("Neovim not connected");
     const escaped = luaExpr.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     return execFileSync(
       "nvim",
@@ -47,37 +57,58 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  // Poll for prompts sent from Neovim (visual selection, etc.)
-  // Neovim does an atomic write (rename), so no partial reads.
-  if (promptFile) {
-    // Clean up stale file from a previous session
-    if (existsSync(promptFile)) {
-      try {
-        unlinkSync(promptFile);
-      } catch {}
-    }
+  // Session context for status updates outside event handlers
+  let sessionCtx: {
+    ui: {
+      setStatus: (id: string, text: string) => void;
+      notify: (msg: string, level: string) => void;
+    };
+  } | null = null;
+
+  // Poll for socket changes (reconnection/disconnect) and prompt files
+  if (stateDir) {
     const poll = setInterval(() => {
-      if (!existsSync(promptFile)) return;
-      try {
-        const text = readFileSync(promptFile, "utf-8").trim();
-        unlinkSync(promptFile);
-        if (text === "__SCAN__") {
-          const output = grepTag(tag);
-          if (output) {
-            pi.sendUserMessage(
-              `Resolve these ${tag}: comments:\n\n${output}`
-            );
-          }
-        } else if (text) {
-          pi.sendUserMessage(text);
+      // 1. Socket — detect (re)connect / disconnect
+      if (socketFile) {
+        if (existsSync(socketFile)) {
+          try {
+            const socket = readFileSync(socketFile, "utf-8").trim();
+            if (socket && socket !== nvim) {
+              nvim = socket;
+              sessionCtx?.ui.setStatus("nvim", "🟢 nvim");
+            }
+          } catch {}
+        } else if (nvim) {
+          nvim = null;
+          sessionCtx?.ui.setStatus("nvim", "🔴 nvim");
         }
-      } catch {}
-    }, 300);
+      }
+
+      // 2. Prompt file — process prompts sent from Neovim
+      if (promptFile && existsSync(promptFile)) {
+        try {
+          const text = readFileSync(promptFile, "utf-8").trim();
+          unlinkSync(promptFile);
+          if (text === "__SCAN__") {
+            const output = grepTag(tag);
+            if (output) {
+              pi.sendUserMessage(
+                `Resolve these ${tag}: comments:\n\n${output}`
+              );
+            }
+          } else if (text) {
+            pi.sendUserMessage(text);
+          }
+        } catch {}
+      }
+    }, 500);
     poll.unref();
   }
 
-  // Inject live Neovim editor state before every prompt
+  // Inject editor state and workflow rules before every prompt
   pi.on("before_agent_start", async (event) => {
+    if (!nvim) return;
+
     const ctx = getContext();
     if (!ctx) return;
 
@@ -105,22 +136,30 @@ export default function (pi: ExtensionAPI) {
 
     if (parts.length === 0) return;
 
+    const workflow = [
+      "After editing files, you MUST call the neovim tool with open_file for each changed file.",
+      "After ALL edits are complete, you MUST call the neovim tool with diff_review.",
+      "Never skip these steps — the user reviews changes in their editor.",
+    ].join("\n");
+
     return {
       systemPrompt:
         event.systemPrompt +
-        `\n\n<neovim_editor_state>\n${parts.join("\n\n")}\n</neovim_editor_state>`,
+        `\n\n<neovim_editor_state>\n${parts.join("\n\n")}\n</neovim_editor_state>` +
+        `\n\n<neovim_workflow>\n${workflow}\n</neovim_workflow>`,
     };
   });
 
-  // Tool: open files in Neovim editor, trigger diff review
+  // Tool: open files and trigger diff review in Neovim
   pi.registerTool({
     name: "neovim",
     label: "Neovim",
     description:
       "Interact with the host Neovim editor. Open files at specific lines or trigger a diff review of all changes.",
     promptGuidelines: [
-      "After making file changes, call neovim with diff_review so the user can review.",
-      "When referencing specific code, call neovim with open_file to show it in the editor.",
+      "After making file changes, you MUST call neovim with open_file for each changed file.",
+      "After ALL edits are complete, you MUST call neovim with diff_review.",
+      "Never skip these steps — the user reviews changes in their editor.",
     ],
     parameters: Type.Object({
       action: Type.String({ description: "'open_file' or 'diff_review'" }),
@@ -132,6 +171,7 @@ export default function (pi: ExtensionAPI) {
       ),
     }),
     async execute(toolCallId, params) {
+      if (!nvim) return ok("Neovim not connected");
       try {
         if (params.action === "open_file") {
           if (!params.path) return ok("Error: path required");
@@ -155,8 +195,9 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // Auto-reload buffers in Neovim after pi edits files
+  // Auto-reload buffers after pi edits files
   pi.on("tool_execution_end", async (event) => {
+    if (!nvim) return;
     if (event.toolName === "edit" || event.toolName === "write") {
       try {
         nvimExec("vim.cmd('checktime')");
@@ -170,9 +211,7 @@ export default function (pi: ExtensionAPI) {
     handler: async (args, ctx) => {
       const output = grepTag(tag);
       if (output) {
-        pi.sendUserMessage(
-          `Resolve these ${tag}: comments:\n\n${output}`
-        );
+        pi.sendUserMessage(`Resolve these ${tag}: comments:\n\n${output}`);
       } else {
         ctx.ui.notify(`No ${tag}: comments found`, "info");
       }
@@ -180,7 +219,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.setStatus("nvim", "🟢 nvim");
+    sessionCtx = ctx;
+    ctx.ui.setStatus("nvim", nvim ? "🟢 nvim" : "🔴 nvim");
   });
 }
 

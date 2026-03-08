@@ -9,13 +9,32 @@ local severity_map = {
   [1] = 'ERROR', [2] = 'WARN', [3] = 'INFO', [4] = 'HINT',
 }
 
+function M._state_dir()
+  local cwd = vim.fn.getcwd()
+  return '/tmp/todo-ai-' .. vim.fn.sha256(cwd):sub(1, 16)
+end
+
 function M.setup(opts)
   config.setup(opts or {})
 
   vim.o.autoread = true
+  local group = vim.api.nvim_create_augroup('TodoAI', { clear = true })
   vim.api.nvim_create_autocmd({ 'FocusGained', 'BufEnter' }, {
-    group = vim.api.nvim_create_augroup('TodoAI', { clear = true }),
+    group = group,
     callback = function() vim.cmd('silent! checktime') end,
+  })
+
+  -- Write socket so extension can connect/reconnect
+  local dir = M._state_dir()
+  vim.fn.mkdir(dir, 'p')
+  vim.fn.writefile({ vim.v.servername }, dir .. '/nvim-socket')
+
+  -- Remove socket on exit → extension detects disconnect (🔴)
+  vim.api.nvim_create_autocmd('VimLeavePre', {
+    group = group,
+    callback = function()
+      os.remove(M._state_dir() .. '/nvim-socket')
+    end,
   })
 end
 
@@ -25,20 +44,30 @@ function M._in_tmux()
   return os.getenv('TMUX') ~= nil
 end
 
+function M._read_file(path)
+  local f = io.open(path, 'r')
+  if not f then return nil end
+  local content = f:read('*a')
+  f:close()
+  local trimmed = content and vim.trim(content) or nil
+  return (trimmed and trimmed ~= '') and trimmed or nil
+end
+
 function M._is_pane_alive()
-  if not M.state.tmux_pane then return false end
+  local pane_id = M.state.tmux_pane or M._read_file(M._state_dir() .. '/pane-id')
+  if not pane_id then return false end
   local panes = vim.fn.system("tmux list-panes -a -F '#{pane_id}'")
-  return panes:find(M.state.tmux_pane, 1, true) ~= nil
+  if panes:find(pane_id, 1, true) then
+    M.state.tmux_pane = pane_id
+    return true
+  end
+  return false
 end
 
 function M._extension_path()
   local source = debug.getinfo(1, 'S').source:sub(2)
   local plugin_root = vim.fn.fnamemodify(source, ':h:h:h')
   return plugin_root .. '/extension/neovim.ts'
-end
-
-function M._prompt_file()
-  return '/tmp/todo-ai-prompt-' .. vim.fn.getpid() .. '.md'
 end
 
 function M._build_cmd(initial_prompt)
@@ -58,25 +87,46 @@ function M._build_cmd(initial_prompt)
   return cmd
 end
 
+function M._write_prompt(text)
+  local dir = M._state_dir()
+  local tmpfile = dir .. '/prompt.md'
+  local staging = tmpfile .. '.tmp'
+  local f = io.open(staging, 'w')
+  if not f then error('Failed to write ' .. staging) end
+  f:write(text)
+  f:close()
+  os.rename(staging, tmpfile)
+end
+
 function M.open_pi(initial_prompt)
   if not M._in_tmux() then
     error('todo-ai requires tmux. Start Neovim inside a tmux session.')
   end
 
+  local dir = M._state_dir()
+  vim.fn.mkdir(dir, 'p')
+  vim.fn.writefile({ vim.v.servername }, dir .. '/nvim-socket')
+
+  -- Reconnect if pi is already running for this CWD
   if M._is_pane_alive() then
     if initial_prompt then
-      M.send_prompt(initial_prompt)
+      M._write_prompt(initial_prompt)
     end
     return
   end
 
+  -- Spawn new pi
   local cmd = M._build_cmd(initial_prompt)
   local socket = vim.v.servername
   local width = config.get('pi_width') or 80
-
-  -- env NVIM=<socket> TODO_AI_PROMPT=<file> TODO_AI_TAG=<tag> pi [args...]
   local tag = config.get('tag')
-  local parts = { 'env', 'NVIM=' .. socket, 'TODO_AI_PROMPT=' .. M._prompt_file(), 'TODO_AI_TAG=' .. tag }
+
+  local parts = {
+    'env',
+    'NVIM=' .. socket,
+    'TODO_AI_STATE_DIR=' .. dir,
+    'TODO_AI_TAG=' .. tag,
+  }
   for _, arg in ipairs(cmd) do
     table.insert(parts, arg)
   end
@@ -88,6 +138,7 @@ function M.open_pi(initial_prompt)
     shell_cmd,
   })
   M.state.tmux_pane = vim.trim(result)
+  vim.fn.writefile({ M.state.tmux_pane }, dir .. '/pane-id')
 end
 
 function M.send_prompt(text)
@@ -95,28 +146,14 @@ function M.send_prompt(text)
     M.open_pi(text)
     return
   end
-  -- Atomic write: stage then rename (extension polls for this file)
-  local tmpfile = M._prompt_file()
-  local staging = tmpfile .. '.tmp'
-  local f = io.open(staging, 'w')
-  if not f then error('Failed to write ' .. staging) end
-  f:write(text)
-  f:close()
-  os.rename(staging, tmpfile)
+  M._write_prompt(text)
 end
 
 function M.scan()
   if not M._is_pane_alive() then
     M.open_pi()
   end
-  -- Write scan command — extension recognizes this sentinel
-  local tmpfile = M._prompt_file()
-  local staging = tmpfile .. '.tmp'
-  local f = io.open(staging, 'w')
-  if not f then error('Failed to write ' .. staging) end
-  f:write('__SCAN__')
-  f:close()
-  os.rename(staging, tmpfile)
+  M._write_prompt('__SCAN__')
 end
 
 function M.focus_pi()

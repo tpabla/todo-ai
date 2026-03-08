@@ -22,9 +22,7 @@ Neovim + [pi coding agent](https://github.com/mariozechner/pi-coding-agent) via 
 └──────────────────────────────────────────────────────┘
 ```
 
-`:TodoAI` opens pi in a tmux split. Each Neovim instance gets its own pi pane with the correct `$NVIM` socket — multiple sessions work independently.
-
-The Neovim plugin is ~50 lines of Lua. All intelligence lives in pi and its [extension](extension/neovim.ts).
+`:TodoAI` opens pi in a tmux split. Pi and Neovim are linked by CWD — close Neovim, reopen it, and pi reconnects automatically (🟢). Close Neovim for good and pi shows disconnected (🔴). Multiple Neovim instances in different projects each get their own pi.
 
 ## Requirements
 
@@ -93,9 +91,11 @@ def process(data):
 
 `<leader>ts` or `:TodoAIScan` — finds all `AGENT:` comments across the project and sends them to pi for resolution. Also available as `/scan` in pi's pane.
 
-### Sessions
+### Sessions & reconnection
 
-Pi manages sessions natively. `:TodoAI` always passes `--resume` so you can pick up where you left off or start fresh. Use `/new` in pi for a blank session, `/resume` to switch.
+Pi manages sessions natively. `:TodoAI` always passes `--resume` so you can pick up where you left off or start fresh.
+
+If pi is already running for your project (same CWD), `:TodoAI` reconnects to it instead of spawning a new instance. Close Neovim → pi shows 🔴. Reopen Neovim → pi goes 🟢 automatically.
 
 ## Configuration
 
@@ -103,6 +103,7 @@ Provider, model, and thinking are configured through pi directly — see [pi doc
 
 ```lua
 require("todo-ai").setup({
+  tag = "AGENT",                 -- comment tag for scanning (AGENT:)
   pi_extra_args = {},            -- extra CLI args passed to pi
   pi_width = 80,                -- tmux pane width in columns
 })
@@ -110,15 +111,16 @@ require("todo-ai").setup({
 
 ## What the extension does
 
-The [pi extension](extension/neovim.ts) (~170 lines of TypeScript):
+The [pi extension](extension/neovim.ts) (~240 lines of TypeScript):
 
 | Hook | What it does |
 |------|-------------|
-| `before_agent_start` | Queries Neovim via `$NVIM` socket for current file, cursor, open buffers, LSP diagnostics. Injected fresh on every prompt. |
-| `neovim` tool | Pi can open files at specific lines and trigger `:DiffviewOpen`. |
+| Socket polling | Detects Neovim connect/disconnect via state dir. 🟢 when connected, 🔴 when not. |
+| `before_agent_start` | Queries editor state (file, cursor, buffers, diagnostics). Injects workflow rules. |
+| `neovim` tool | Opens files at specific lines and triggers `:DiffviewOpen`. |
 | `tool_execution_end` | Calls `:checktime` after edits so buffers reload. |
-| `/scan` command | Greps for `TODO: @ai` (uses `rg` if available) and sends matches to pi. |
-| Prompt polling | Watches for prompt files from Neovim (visual selection, etc.). No keystroke injection. |
+| `/scan` command | Greps for `AGENT:` (uses `rg` if available) and sends matches to pi. |
+| Prompt polling | Watches for prompt files from Neovim (visual selection, scan). |
 
 ## Project structure
 
