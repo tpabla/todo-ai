@@ -2,9 +2,7 @@ local M = {}
 local config = require('todo-ai.config')
 
 M.state = {
-  terminal_buf = nil,
-  terminal_win = nil,
-  terminal_job = nil,
+  tmux_pane = nil,
 }
 
 local severity_map = {
@@ -33,41 +31,16 @@ function M.setup(opts)
   end
 end
 
--- Terminal management ---------------------------------------------------------
+-- Tmux pane management --------------------------------------------------------
 
-function M._is_pi_running()
-  if not M.state.terminal_job or not M.state.terminal_buf then return false end
-  if not vim.api.nvim_buf_is_valid(M.state.terminal_buf) then
-    M.state.terminal_job = nil
-    M.state.terminal_buf = nil
-    return false
-  end
-  return true
+function M._in_tmux()
+  return os.getenv('TMUX') ~= nil
 end
 
-function M._ensure_visible()
-  if M.state.terminal_win and vim.api.nvim_win_is_valid(M.state.terminal_win) then
-    return
-  end
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    if vim.api.nvim_win_get_buf(win) == M.state.terminal_buf then
-      M.state.terminal_win = win
-      return
-    end
-  end
-  local original_win = vim.api.nvim_get_current_win()
-  M._open_split()
-  vim.api.nvim_win_set_buf(M.state.terminal_win, M.state.terminal_buf)
-  vim.api.nvim_set_current_win(original_win)
-end
-
-function M._open_split()
-  local position = config.get('pi_position') or 'right'
-  local width = config.get('pi_width') or 80
-  vim.cmd('vsplit')
-  if position == 'right' then vim.cmd('wincmd L') else vim.cmd('wincmd H') end
-  M.state.terminal_win = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_width(M.state.terminal_win, width)
+function M._is_pane_alive()
+  if not M.state.tmux_pane then return false end
+  local panes = vim.fn.system("tmux list-panes -a -F '#{pane_id}'")
+  return panes:find(M.state.tmux_pane, 1, true) ~= nil
 end
 
 function M._extension_path()
@@ -80,8 +53,22 @@ function M._build_cmd(initial_prompt)
   local cmd = { 'pi' }
   local cfg = config.config
 
+  if cfg.pi_provider then
+    table.insert(cmd, '--provider')
+    table.insert(cmd, cfg.pi_provider)
+  end
+  if cfg.pi_model then
+    table.insert(cmd, '--model')
+    table.insert(cmd, cfg.pi_model)
+  end
+  if cfg.pi_thinking then
+    table.insert(cmd, '--thinking')
+    table.insert(cmd, cfg.pi_thinking)
+  end
+
   table.insert(cmd, '-e')
   table.insert(cmd, M._extension_path())
+  table.insert(cmd, '--resume')
 
   if cfg.pi_extra_args then
     for _, arg in ipairs(cfg.pi_extra_args) do
@@ -97,101 +84,70 @@ function M._build_cmd(initial_prompt)
 end
 
 function M.open_pi(initial_prompt)
-  if M._is_pi_running() then
-    M._ensure_visible()
+  if not M._in_tmux() then
+    error('todo-ai requires tmux. Start Neovim inside a tmux session.')
+  end
+
+  if M._is_pane_alive() then
     if initial_prompt then
       M.send_prompt(initial_prompt)
     end
     return
   end
 
-  local original_win = vim.api.nvim_get_current_win()
-  M._open_split()
-
-  -- Fresh buffer so termopen doesn't hijack the original buffer
-  -- (vsplit shares the same buffer — termopen converts it in-place)
-  vim.cmd('enew')
-
   local cmd = M._build_cmd(initial_prompt)
-  M.state.terminal_job = vim.fn.termopen(cmd, {
-    on_exit = function()
-      M.state.terminal_job = nil
-    end,
-  })
-  M.state.terminal_buf = vim.api.nvim_get_current_buf()
-  vim.bo[M.state.terminal_buf].bufhidden = 'hide'
+  local socket = vim.v.servername
+  local width = config.get('pi_width') or 80
 
-  M._setup_terminal_nav(M.state.terminal_buf)
-
-  vim.api.nvim_set_current_win(original_win)
-end
-
--- Terminal-mode nav keymaps so Ctrl+h/j/k/l navigate windows/tmux panes
--- instead of being swallowed by pi's TUI
-function M._setup_terminal_nav(buf)
-  local nav = { h = 'Left', j = 'Down', k = 'Up', l = 'Right' }
-  for key, dir in pairs(nav) do
-    vim.keymap.set('t', '<C-' .. key .. '>', function()
-      vim.cmd('stopinsert')
-      local tmux_cmd = 'TmuxNavigate' .. dir
-      if vim.fn.exists(':' .. tmux_cmd) == 2 then
-        vim.cmd(tmux_cmd)
-      else
-        vim.cmd('wincmd ' .. key)
-      end
-    end, { buffer = buf, silent = true })
+  -- env NVIM=<socket> pi [args...]
+  local parts = { 'env', 'NVIM=' .. socket }
+  for _, arg in ipairs(cmd) do
+    table.insert(parts, arg)
   end
+  local shell_cmd = table.concat(vim.tbl_map(vim.fn.shellescape, parts), ' ')
+
+  local result = vim.fn.system({
+    'tmux', 'split-window', '-h', '-l', tostring(width),
+    '-P', '-F', '#{pane_id}',
+    shell_cmd,
+  })
+  M.state.tmux_pane = vim.trim(result)
 end
 
 function M.send_prompt(text)
-  if not M._is_pi_running() then
+  if not M._is_pane_alive() then
     M.open_pi(text)
     return
   end
-  local tmpfile = '/tmp/todo-ai-prompt.md'
+  local tmpfile = '/tmp/todo-ai-prompt-' .. vim.fn.getpid() .. '.md'
   local f = io.open(tmpfile, 'w')
   if not f then error('Failed to write ' .. tmpfile) end
   f:write(text)
   f:close()
-  vim.fn.chansend(M.state.terminal_job, '/nvim\r')
+  vim.fn.system({
+    'tmux', 'send-keys', '-t', M.state.tmux_pane,
+    '/nvim ' .. tmpfile, 'Enter',
+  })
 end
 
 function M.focus_pi()
-  if not M._is_pi_running() then
+  if M._is_pane_alive() then
+    vim.fn.system({ 'tmux', 'select-pane', '-t', M.state.tmux_pane })
+  else
     M.open_pi()
-    return
-  end
-  M._ensure_visible()
-  if M.state.terminal_win and vim.api.nvim_win_is_valid(M.state.terminal_win) then
-    vim.api.nvim_set_current_win(M.state.terminal_win)
-    vim.cmd('startinsert')
   end
 end
 
--- Remote functions (called by the pi extension via nvim --server) -------------
+-- Remote functions (called by pi extension via nvim --server) -----------------
 
 function M.remote_open(path, line)
   vim.schedule(function()
-    for _, win in ipairs(vim.api.nvim_list_wins()) do
-      if vim.bo[vim.api.nvim_win_get_buf(win)].buftype ~= 'terminal' then
-        vim.api.nvim_set_current_win(win)
-        vim.cmd('edit +' .. (line or 1) .. ' ' .. vim.fn.fnameescape(path))
-        return
-      end
-    end
-    vim.cmd('vsplit')
     vim.cmd('edit +' .. (line or 1) .. ' ' .. vim.fn.fnameescape(path))
   end)
 end
 
 function M.remote_diff_review()
   vim.schedule(function()
-    for _, win in ipairs(vim.api.nvim_list_wins()) do
-      if vim.bo[vim.api.nvim_win_get_buf(win)].buftype ~= 'terminal' then
-        vim.api.nvim_set_current_win(win)
-        break
-      end
-    end
     vim.cmd('DiffviewOpen')
   end)
 end
@@ -199,35 +155,33 @@ end
 function M.remote_get_context()
   local ctx = { open_files = {} }
 
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local buf = vim.api.nvim_win_get_buf(win)
-    if vim.bo[buf].buftype ~= 'terminal' then
-      local name = vim.api.nvim_buf_get_name(buf)
-      if name ~= '' then
-        ctx.current_file = name
-        ctx.cursor_line = vim.api.nvim_win_get_cursor(win)[1]
-        local diags = vim.diagnostic.get(buf)
-        if #diags > 0 then
-          ctx.diagnostics = {}
-          for i, d in ipairs(diags) do
-            if i > 20 then break end
-            table.insert(ctx.diagnostics, {
-              line = d.lnum + 1,
-              severity = severity_map[d.severity] or 'UNKNOWN',
-              message = d.message,
-            })
-          end
-        end
+  -- Current window's file and cursor
+  local win = vim.api.nvim_get_current_win()
+  local buf = vim.api.nvim_win_get_buf(win)
+  local name = vim.api.nvim_buf_get_name(buf)
+  if name ~= '' and vim.bo[buf].buftype == '' then
+    ctx.current_file = name
+    ctx.cursor_line = vim.api.nvim_win_get_cursor(win)[1]
+    local diags = vim.diagnostic.get(buf)
+    if #diags > 0 then
+      ctx.diagnostics = {}
+      for i, d in ipairs(diags) do
+        if i > 20 then break end
+        table.insert(ctx.diagnostics, {
+          line = d.lnum + 1,
+          severity = severity_map[d.severity] or 'UNKNOWN',
+          message = d.message,
+        })
       end
-      break
     end
   end
 
-  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].buflisted and vim.bo[buf].buftype == '' then
-      local name = vim.api.nvim_buf_get_name(buf)
-      if name ~= '' then
-        table.insert(ctx.open_files, name)
+  -- All open file buffers
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(b) and vim.bo[b].buflisted and vim.bo[b].buftype == '' then
+      local n = vim.api.nvim_buf_get_name(b)
+      if n ~= '' then
+        table.insert(ctx.open_files, n)
       end
     end
   end
