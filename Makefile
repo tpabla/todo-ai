@@ -1,5 +1,5 @@
 .PHONY: build build-debug build-release test test-lua test-rust test-single \
-       test-watch clean clean-nvim check install dev lint help
+       test-watch clean install dev lint help
 
 # --- Build ---
 
@@ -17,9 +17,8 @@ test: test-lua test-rust ## Run all tests
 
 test-lua: ## Run Lua/Neovim tests
 	@echo "Running Lua tests..."
-	@timeout 120 nvim --headless -u tests/minimal_init.lua \
-		-c 'lua require("plenary.test_harness").test_directory("tests/plenary/", {minimal_init="tests/minimal_init.lua", sequential=true})'
-	@pkill -f 'nvim --headless' 2>/dev/null || true
+	@nvim --headless -u tests/minimal_init.lua \
+		-c 'PlenaryBustedDirectory tests/plenary/ {minimal_init="tests/minimal_init.lua", sequential=true}'
 
 test-rust: ## Run Rust tests
 	cd rust && cargo test
@@ -27,9 +26,8 @@ test-rust: ## Run Rust tests
 test-single: ## Run single test file (FILE=tests/plenary/xxx_spec.lua)
 	@test -z "$(FILE)" && echo "Usage: make test-single FILE=tests/plenary/xxx_spec.lua" && exit 1 || true
 	@echo "Running: $(FILE)"
-	@timeout 10 nvim --headless -u tests/minimal_init.lua \
-		-c "PlenaryBustedFile $(FILE)" -c "qa!" || \
-		(pkill -f 'nvim --headless'; exit 1)
+	@nvim --headless -u tests/minimal_init.lua \
+		-c "PlenaryBustedFile $(FILE)"
 
 test-watch: ## Watch for changes and re-run Lua tests
 	@which fswatch > /dev/null || (echo "Install fswatch: brew install fswatch" && exit 1)
@@ -67,9 +65,6 @@ lint: ## Find dead code and other issues
 clean: ## Remove build artifacts
 	cd rust && cargo clean
 	@rm -f /tmp/todo-ai-*.sock
-
-clean-nvim: ## Kill hanging headless nvim processes
-	@pkill -f 'nvim --headless' 2>/dev/null || echo "No hanging processes"
 
 # --- Help ---
 
