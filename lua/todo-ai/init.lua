@@ -121,6 +121,10 @@ function M.open_pi(initial_prompt)
   local original_win = vim.api.nvim_get_current_win()
   M._open_split()
 
+  -- Fresh buffer so termopen doesn't hijack the original buffer
+  -- (vsplit shares the same buffer — termopen converts it in-place)
+  vim.cmd('enew')
+
   local cmd = M._build_cmd(initial_prompt)
   M.state.terminal_job = vim.fn.termopen(cmd, {
     on_exit = function()
@@ -130,7 +134,26 @@ function M.open_pi(initial_prompt)
   M.state.terminal_buf = vim.api.nvim_get_current_buf()
   vim.bo[M.state.terminal_buf].bufhidden = 'hide'
 
+  M._setup_terminal_nav(M.state.terminal_buf)
+
   vim.api.nvim_set_current_win(original_win)
+end
+
+-- Terminal-mode nav keymaps so Ctrl+h/j/k/l navigate windows/tmux panes
+-- instead of being swallowed by pi's TUI
+function M._setup_terminal_nav(buf)
+  local nav = { h = 'Left', j = 'Down', k = 'Up', l = 'Right' }
+  for key, dir in pairs(nav) do
+    vim.keymap.set('t', '<C-' .. key .. '>', function()
+      vim.cmd('stopinsert')
+      local tmux_cmd = 'TmuxNavigate' .. dir
+      if vim.fn.exists(':' .. tmux_cmd) == 2 then
+        vim.cmd(tmux_cmd)
+      else
+        vim.cmd('wincmd ' .. key)
+      end
+    end, { buffer = buf, silent = true })
+  end
 end
 
 function M.send_prompt(text)
