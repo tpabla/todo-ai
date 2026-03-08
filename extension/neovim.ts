@@ -1,3 +1,10 @@
+// tmux panes divide —
+// neovim and pi converse,
+// diffs bloom in silence
+
+
+
+
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { createHash } from "node:crypto";
@@ -165,9 +172,8 @@ export default function (pi: ExtensionAPI) {
     if (parts.length === 0) return;
 
     const workflow = [
-      "After ALL edits are complete, you MUST call the neovim tool with diff_review.",
-      "Use open_file only when referencing specific code during conversation, not as a final step.",
-      "Never skip diff_review — the user reviews changes in their editor.",
+      "Use open_file only when referencing specific code during conversation.",
+      "Use diff_review only when the user asks to see the diff.",
       "Do NOT commit changes (no git commit). The user reviews the diff and commits themselves.",
     ].join("\n");
 
@@ -186,8 +192,8 @@ export default function (pi: ExtensionAPI) {
     description:
       "Interact with the host Neovim editor. Open files at specific lines or trigger a diff review of all changes.",
     promptGuidelines: [
-      "After ALL edits are complete, you MUST call neovim with diff_review.",
-      "Use open_file when referencing specific code during conversation, not as a routine final step.",
+      "Use open_file when referencing specific code during conversation.",
+      "Use diff_review only when the user asks to see the diff.",
       "Do NOT git commit. The user commits after reviewing the diff.",
     ],
     parameters: Type.Object({

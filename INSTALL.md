@@ -146,7 +146,7 @@ Press `<leader>ts` or run `:TodoAIScan`. Pi finds all `AGENT:` comments and reso
 
 ### Project context
 
-Pi reads your project files directly. For project-specific instructions, add a `CLAUDE.md` (or equivalent) to your project root — pi picks it up when needed.
+Pi reads your project files directly. For project-specific instructions, add an `AGENTS.md` to your project root — pi picks it up automatically.
 
 ### Visual mode
 
