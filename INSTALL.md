@@ -2,7 +2,19 @@
 
 ## Prerequisites
 
-### 1. Pi coding agent
+### 1. tmux
+
+Neovim must run inside a tmux session. todo-ai opens pi in a tmux pane alongside Neovim.
+
+```bash
+# macOS
+brew install tmux
+
+# Ubuntu/Debian
+sudo apt install tmux
+```
+
+### 2. Pi coding agent
 
 ```bash
 npm install -g @mariozechner/pi-coding-agent
@@ -19,11 +31,19 @@ export OPENAI_API_KEY=sk-...
 export GOOGLE_API_KEY=...
 ```
 
-See [pi docs](https://github.com/mariozechner/pi-coding-agent) for all supported providers.
+See [pi docs](https://github.com/mariozechner/pi-coding-agent) for all supported providers and configuration.
 
-### 2. Neovim
+### 3. Neovim
 
 Neovim **0.10+** required.
+
+### 4. diffview.nvim
+
+Required for reviewing changes pi makes:
+
+```lua
+{ "sindrets/diffview.nvim" }
+```
 
 ## Plugin setup
 
@@ -32,9 +52,7 @@ Neovim **0.10+** required.
 ```lua
 {
   "tpabla/todo-ai",
-  dependencies = {
-    "sindrets/diffview.nvim",
-  },
+  dependencies = { "sindrets/diffview.nvim" },
   config = function()
     require("todo-ai").setup()
   end,
@@ -46,9 +64,7 @@ Neovim **0.10+** required.
 ```lua
 use {
   "tpabla/todo-ai",
-  requires = {
-    "sindrets/diffview.nvim",
-  },
+  requires = { "sindrets/diffview.nvim" },
   config = function()
     require("todo-ai").setup()
   end,
@@ -72,20 +88,17 @@ require("todo-ai").setup()
 
 ## Configuration
 
-Provider, model, and thinking are configured through pi itself (see [pi docs](https://github.com/mariozechner/pi-coding-agent)). The settings below are todo-ai-specific:
+Provider, model, and thinking level are configured through pi directly (see [pi docs](https://github.com/mariozechner/pi-coding-agent)). The settings below are todo-ai-specific:
 
 ```lua
 require("todo-ai").setup({
-  pi_extra_args = {},            -- Additional CLI args for pi
-                                 --   { "--continue" }    resume last session
-                                 --   { "--no-session" }  ephemeral session
+  pi_extra_args = {},            -- Additional CLI args passed to pi
+                                 --   { "--no-session" }  ephemeral mode
 
-  -- UI
-  pi_position = "right",        -- Terminal position: "right" or "left"
-  pi_width = 80,                -- Terminal width in columns
+  pi_position = "right",        -- Tmux pane position: "right" or "left"
+  pi_width = 80,                -- Tmux pane width in columns
 
-  -- @ai tag highlighting
-  ai_highlight = {
+  ai_highlight = {               -- @ai tag highlighting
     enabled = true,
     fg = "#ff79c6",
     bg = "#1a1a2e",
@@ -96,21 +109,23 @@ require("todo-ai").setup({
 
 ## Verify installation
 
-1. Open Neovim
-2. Run `:TodoAI`
-3. Pi should open in a right-side terminal split
-4. Type a message — pi should respond
-5. Check pi's footer for `🟢 nvim` — confirms Neovim integration is active
+1. Start tmux: `tmux`
+2. Open Neovim: `nvim`
+3. Run `:TodoAI`
+4. Pi should open in a tmux pane to the right with a session selector
+5. Start a new session or pick an existing one
+6. Type a message — pi should respond
+7. Check pi's footer for `🟢 nvim` — confirms Neovim integration is active
 
 ## Keybindings
 
 | Default | Command | Description |
 |---------|---------|-------------|
-| `<leader>tc` | `:TodoAI` | Open/show pi terminal |
-| `<leader>tf` | `:TodoAIFocus` | Focus pi terminal (enters terminal mode) |
+| `<leader>tc` | `:TodoAI` | Open pi in a tmux pane (reuses existing) |
+| `<leader>tf` | `:TodoAIFocus` | Switch tmux focus to pi's pane |
 | `<leader>ti` | `:TodoAIVisual` | Send visual selection to pi |
 
-Override in your config:
+Override:
 
 ```lua
 vim.keymap.set("n", "<leader>ai", ":TodoAI<CR>")
@@ -134,50 +149,50 @@ def fetch(url):
 function useAuth() { ... }
 ```
 
-In pi's terminal, type `/scan`. Pi greps for all `TODO: @ai` comments and resolves them.
+In pi's pane, type `/scan`. Pi greps for all `TODO: @ai` comments and resolves them.
 
 ### Project context
 
-Pi reads your files directly. For project-specific instructions, add a `CLAUDE.md` (or similar) to your project root — pi picks it up automatically.
+Pi reads your project files directly. For project-specific instructions, add a `CLAUDE.md` (or equivalent) to your project root — pi picks it up when needed.
 
-### Visual mode workflow
+### Visual mode
 
 1. Select code in visual mode
 2. Press `<leader>ti`
-3. Type what you want (e.g., "add error handling", "convert to TypeScript")
-4. Pi edits the file directly
+3. Type your instruction
+4. Pi processes it and edits the file
 5. `:DiffviewOpen` to review
 
 ## Troubleshooting
 
+### `todo-ai requires tmux`
+
+Neovim must run inside a tmux session:
+
+```bash
+tmux
+nvim
+```
+
 ### `pi` not found
 
-```
-Error: pi not found in PATH
-```
-
-Install: `npm install -g @mariozechner/pi-coding-agent`
+Install pi: `npm install -g @mariozechner/pi-coding-agent`
 
 ### No `🟢 nvim` in pi's footer
 
 The extension isn't loading. Check:
 
-- Extension file exists: `ls <plugin-path>/extension/neovim.ts`
-- Test manually: `pi -e <plugin-path>/extension/neovim.ts`
-- The `$NVIM` environment variable is set (automatic inside Neovim's `:terminal`)
+- Extension file exists: the plugin ships it at `extension/neovim.ts`
+- Test manually: `NVIM=/tmp/nvimXXXX/0 pi -e /path/to/todo-ai/extension/neovim.ts`
+- The `$NVIM` variable is set — todo-ai passes this automatically via tmux
 
 ### Buffers not reloading after edits
 
-The extension calls `:checktime` automatically. If it's not working:
+The extension calls `:checktime` automatically. If not working:
 
 - Run `:checktime` manually
 - Ensure `autoread` is on (the plugin sets this in `setup()`)
 
 ### Diffview not opening
 
-diffview.nvim is a required dependency. If using lazy.nvim or packer, it should be installed automatically. For manual installs:
-
-```bash
-git clone https://github.com/sindrets/diffview.nvim.git \
-  ~/.local/share/nvim/site/pack/plugins/start/diffview.nvim
-```
+Install [diffview.nvim](https://github.com/sindrets/diffview.nvim). It's listed as a dependency — plugin managers should install it automatically.
