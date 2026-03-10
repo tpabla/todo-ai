@@ -1,72 +1,27 @@
-.PHONY: build build-debug build-release test test-lua test-rust test-single \
-       test-watch clean install dev lint help
+.PHONY: test test-single lint dev install clean help
 
-# --- Build ---
-
-build: build-release ## Build release binary (default)
-
-build-release: ## Build optimized Rust backend
-	cd rust && cargo build --release
-
-build-debug: ## Build debug Rust backend (faster compile)
-	cd rust && cargo build
-
-# --- Test ---
-
-test: test-lua test-rust ## Run all tests
-
-test-lua: ## Run Lua/Neovim tests
-	@echo "Running Lua tests..."
+test: ## Run tests
 	@nvim --headless -u tests/minimal_init.lua \
 		-c 'PlenaryBustedDirectory tests/plenary/ {minimal_init="tests/minimal_init.lua", sequential=true}'
 
-test-rust: ## Run Rust tests
-	cd rust && cargo test
-
-test-single: ## Run single test file (FILE=tests/plenary/xxx_spec.lua)
-	@test -z "$(FILE)" && echo "Usage: make test-single FILE=tests/plenary/xxx_spec.lua" && exit 1 || true
-	@echo "Running: $(FILE)"
+test-single: ## Run one test (FILE=tests/plenary/xxx_spec.lua)
 	@nvim --headless -u tests/minimal_init.lua \
 		-c "PlenaryBustedFile $(FILE)"
 
-test-watch: ## Watch for changes and re-run Lua tests
-	@which fswatch > /dev/null || (echo "Install fswatch: brew install fswatch" && exit 1)
-	@while true; do \
-		clear; \
-		make test-lua; \
-		echo ""; \
-		echo "Watching for changes (Ctrl+C to stop)..."; \
-		fswatch -1 -r lua/ tests/ 2>/dev/null; \
-	done
-
-# --- Install ---
-
-install: build-release ## Build and install to Neovim packages dir
-	@mkdir -p ~/.local/share/nvim/site/pack/plugins/start/todo-ai
-	@rsync -a --delete \
-		--exclude rust/target \
-		--exclude .git \
-		--exclude .todoai \
-		. ~/.local/share/nvim/site/pack/plugins/start/todo-ai/
-	@echo "Installed to ~/.local/share/nvim/site/pack/plugins/start/todo-ai"
-
-dev: ## Symlink local dev copy into Neovim packages
-	@ln -sfn $(CURDIR) ~/.local/share/nvim/site/pack/plugins/start/todo-ai
-	@echo "Symlinked $(CURDIR) → ~/.local/share/nvim/site/pack/plugins/start/todo-ai"
-
-# --- Lint ---
-
-lint: ## Find dead code and other issues
-	@echo "Checking for dead Lua functions..."
+lint: ## Find dead Lua code
 	@bash scripts/find_dead_code.sh
 
-# --- Clean ---
+dev: ## Symlink into Neovim packages for development
+	@ln -sfn $(CURDIR) ~/.local/share/nvim/site/pack/plugins/start/todo-ai
+	@echo "Symlinked → ~/.local/share/nvim/site/pack/plugins/start/todo-ai"
 
-clean: ## Remove build artifacts
-	cd rust && cargo clean
-	@rm -f /tmp/todo-ai-*.sock
+install: ## Install to Neovim packages directory
+	@mkdir -p ~/.local/share/nvim/site/pack/plugins/start/todo-ai
+	@rsync -a --delete --exclude .git . ~/.local/share/nvim/site/pack/plugins/start/todo-ai/
+	@echo "Installed"
 
-# --- Help ---
+clean: ## Remove temp files
+	@rm -f /tmp/todo-ai-prompt.md /tmp/todo-ai.log
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \

@@ -1,6 +1,0 @@
-aiohttp>=3.8.0
-aiohttp-cors>=0.7.0
-
-# Optional providers (install as needed)
-# anthropic>=0.8.0  # For Claude API
-# openai>=1.0.0     # For OpenAI/GPT

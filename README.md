@@ -1,223 +1,143 @@
-# 🤖 TodoAI - AI-Powered Code Assistant for Neovim
+# todo-ai
 
-A Neovim plugin that brings AI code assistance through TODO comments, interactive chat, and visual selection — using aider-style SEARCH/REPLACE blocks for precise code changes.
+Neovim + [pi coding agent](https://github.com/mariozechner/pi-coding-agent) via tmux. Pi runs in its own tmux pane with full access to your editor state. It edits files directly; you review with [diffview.nvim](https://github.com/sindrets/diffview.nvim).
 
-## ✨ Features
-
-- **📝 TODO Scanning**: Detects `TODO: @ai` comments and resolves them with AI
-- **💬 Interactive Chat**: Vim-native chat buffer (`:w` to send messages)
-- **👁️ Visual Mode**: Select code, get AI-powered refactoring/explanation
-- **🎨 Visual Diffs**: Inline diff display using native Neovim `DiffAdd`/`DiffDelete` highlighting with per-change accept/reject
-- **🔍 Context-Aware**: Includes LSP diagnostics, project context, and file content
-- **📊 Multi-Provider**: Claude, OpenAI, Ollama, and Claude CLI
-- **⚡ Rust Backend**: Async Rust process communicates via Unix socket for non-blocking LLM calls
-
-## 🏗️ Architecture
+## How it works
 
 ```
-User Input → unified_prompt.process() → Rust Backend (Unix socket)
-                                              ↓
-                                        LLM Provider (Claude/OpenAI/Ollama)
-                                              ↓
-                                        JSON Response {mode: "chat"|"changes"}
-                                              ↓
-                                        SEARCH/REPLACE blocks → Visual Diff
+┌─ tmux ──────────────────────────────────────────────┐
+│                                                      │
+│  Neovim (pane 1)              pi (pane 2)            │
+│  ┌──────────────────┐        ┌────────────────────┐  │
+│  │                  │        │                    │  │
+│  │ • current file   │───────►│ reads editor state │  │
+│  │ • cursor line    │        │ on every prompt    │  │
+│  │ • open buffers   │        │                    │  │
+│  │ • LSP diagnostics│◄───────│ opens files        │  │
+│  │                  │        │ triggers diffview  │  │
+│  │                  │◄───────│ reloads buffers    │  │
+│  │                  │        │                    │  │
+│  └──────────────────┘        └────────────────────┘  │
+│                                                      │
+└──────────────────────────────────────────────────────┘
 ```
 
-**Key design decisions:**
-- **Single entry point**: All requests flow through `unified_prompt.process()`
-- **Aider-style SEARCH/REPLACE**: Exact text matching for code changes — no line numbers or complex diffs
-- **Fail fast**: No silent failures, no fallback behavior, no guessing
-- **Native Neovim diff**: Uses `DiffAdd`/`DiffDelete` highlighting for visual diffs
+`:TodoAI` opens pi in a tmux split. Pi and Neovim are linked by CWD — close Neovim, reopen it, and pi reconnects automatically (🟢). Close Neovim for good and pi shows disconnected (🔴). Multiple Neovim instances in different projects each get their own pi.
 
-### Core Components
+## Requirements
 
-| Component | Description |
-|-----------|-------------|
-| `unified_prompt.lua` | Single entry point for all AI requests |
-| `backend.lua` | Manages Rust backend process via Unix socket |
-| `search_replace.lua` | Applies SEARCH/REPLACE text transformations |
-| `diff.lua` | Visual diff display with accept/reject per change |
-| `chat.lua` | Interactive chat buffer |
-| `scanner.lua` | Finds `TODO: @ai` comments in buffers |
-| `visual.lua` | Visual mode selection processing |
-| `lsp_context.lua` | Collects LSP diagnostics for context |
-| `context_compact.lua` | Project context generation |
-| **Rust backend** | Async LLM communication, prompt building, response parsing |
+- **[tmux](https://github.com/tmux/tmux)** — Neovim must be running inside tmux
+- **[pi](https://github.com/mariozechner/pi-coding-agent)** — `npm i -g @mariozechner/pi-coding-agent`
+- **[diffview.nvim](https://github.com/sindrets/diffview.nvim)** — for reviewing changes
+- **[todo-comments.nvim](https://github.com/folke/todo-comments.nvim)** *(optional)* — adds telescope search and icons for `AGENT:` tags
 
-## 📦 Installation
+See **[INSTALL.md](INSTALL.md)** for detailed setup.
 
-### Using [lazy.nvim](https://github.com/folke/lazy.nvim)
+## Quick start
 
 ```lua
+-- lazy.nvim
 {
   "tpabla/todo-ai",
-  build = "make build-rust",
-  dependencies = { "nvim-lua/plenary.nvim" },
-  config = function()
-    require("todo-ai").setup({
-      provider = "claude",
-      model = "claude-opus-4-6",
-    })
-  end,
+  dependencies = { "sindrets/diffview.nvim" },
+  opts = {},
 }
 ```
 
-### Manual
-
-```bash
-git clone https://github.com/tpabla/todo-ai.git \
-  ~/.local/share/nvim/site/pack/plugins/start/todo-ai
-cd ~/.local/share/nvim/site/pack/plugins/start/todo-ai
-make build-rust
-```
-
-## 🔧 Configuration
-
-### API Keys
-
-```bash
-# Claude
-export ANTHROPIC_API_KEY="sk-ant-..."
-
-# OpenAI
-export OPENAI_API_KEY="sk-..."
-
-# Ollama (no key needed)
-ollama serve
-```
-
-### Setup
-
-```lua
-require('todo-ai').setup({
-  provider = 'claude',           -- 'claude', 'openai', 'ollama'
-  model = 'claude-opus-4-6',
-  temperature = 0.7,
-  max_tokens = 8192,
-
-  -- UI
-  diff_style = 'inline',
-  chat_window_width = 60,
-  chat_window_position = 'right',
-
-  -- @ai tag highlighting
-  ai_highlight = {
-    enabled = true,
-    fg = '#ff79c6',
-    bg = '#1a1a2e',
-    bold = true,
-  },
-})
-```
-
-## 🎮 Usage
-
-### Keybindings
+## Usage
 
 | Key | Command | Description |
 |-----|---------|-------------|
-| `<leader>ts` | `:TodoAIScan` | Scan buffer for `TODO: @ai` comments |
-| `<leader>tc` | `:TodoAIChat` | Open interactive chat |
-| `<leader>ta` | `:TodoAIAccept` | Accept current change |
-| `<leader>tr` | `:TodoAIReject` | Reject current change |
-| `<leader>ti` | `:TodoAIVisual` | Process visual selection |
-| `<leader>tg` | `:TodoAIGenerateContext` | Generate project context |
-| `<leader>td` | `:TodoAISuggestDryTags` | Suggest DRY tags |
-| `<leader>tS` | `:TodoAIScanProject` | Scan entire project |
+| `<leader>tc` | `:TodoAI` | Open pi in a tmux pane (or reuse existing) |
+| `<leader>tf` | `:TodoAIFocus` | Switch tmux focus to pi's pane |
+| `<leader>ts` | `:TodoAIScan` | Find `AGENT:` comments, send to pi to resolve |
+| `<leader>ti` | `:TodoAIVisual` | Send visual selection to pi |
 
-### TODO Scanning
+### Workflow
+
+1. `:TodoAI` — pi opens in a tmux pane to the right, shows session selector
+2. Pick a previous session or start new
+3. Type your request in pi's TUI
+4. Pi reads files, makes edits, runs commands
+5. Pi opens relevant files in your editor and triggers diff review
+6. Switch back to Neovim, review with `:DiffviewOpen`, commit or revert
+
+### Context is always fresh
+
+Open files, navigate code, trigger LSP between prompts — the extension queries Neovim for current file, cursor position, open buffers, and diagnostics fresh on every prompt.
+
+### Visual mode
+
+Select code → `<leader>ti` → type instruction → pi processes it.
+
+### AGENT scanning
 
 ```python
-# TODO: @ai Add error handling for API calls
-def fetch_data(url):
-    return requests.get(url).json()
+# AGENT: add input validation
+def process(data):
+    return data.upper()
 ```
 
-Press `<leader>ts` — the AI reads the TODO, generates a SEARCH/REPLACE block, and shows an inline diff you can accept or reject.
+`<leader>ts` or `:TodoAIScan` — finds all `AGENT:` comments across the project and sends them to pi for resolution. Also available as `/scan` in pi's pane.
 
-### Interactive Chat
+### Sessions & reconnection
 
-1. `<leader>tc` opens the chat buffer
-2. Type your message like normal vim editing
-3. `:w` sends the message
-4. AI responds with either chat text or code changes
-5. Code changes appear as inline diffs in the target buffer
+Pi manages sessions natively. `:TodoAI` always passes `--resume` so you can pick up where you left off or start fresh.
 
-### Visual Mode
+If pi is already running for your project (same CWD), `:TodoAI` reconnects to it instead of spawning a new instance. Close Neovim → pi shows 🔴. Reopen Neovim → pi goes 🟢 automatically.
 
-Select code → `<leader>ti` → type instruction in floating window → AI processes selection.
+Pi started independently (not through `:TodoAI`) also works — the extension auto-discovers Neovim's socket via CWD hash. Just run pi with the extension in the same directory as Neovim.
 
-## 🛠️ Development
+## Configuration
 
-### Project Structure
+Provider, model, and thinking are configured through pi directly — see [pi docs](https://github.com/mariozechner/pi-coding-agent). The settings below are todo-ai-specific:
+
+```lua
+require("todo-ai").setup({
+  tag = "AGENT",                 -- comment tag for scanning (AGENT:)
+  pi_extra_args = {},            -- extra CLI args passed to pi
+  pi_width = 80,                -- tmux pane width in columns
+})
+```
+
+## What the extension does
+
+The [pi extension](extension/neovim.ts) (~280 lines of TypeScript):
+
+| Hook | What it does |
+|------|-------------|
+| Socket polling | Detects Neovim connect/disconnect via state dir. 🟢 when connected, 🔴 when not. |
+| `before_agent_start` | Queries editor state (file, cursor, buffers, diagnostics). Injects workflow rules. |
+| `neovim` tool | Opens files at specific lines and triggers `:DiffviewOpen`. |
+| `tool_execution_end` | Calls `:checktime` after edits so buffers reload. |
+| `/scan` command | Greps for `AGENT:` (uses `rg` if available) and sends matches to pi. |
+| Prompt polling | Watches for prompt files from Neovim (visual selection, scan). |
+
+## Project structure
 
 ```
 todo-ai/
+├── extension/neovim.ts      # Pi extension — context, tools, commands
 ├── lua/todo-ai/
-│   ├── init.lua              # Entry point & command registration
-│   ├── unified_prompt.lua    # Single entry point for all AI requests
-│   ├── backend.lua           # Rust backend process management
-│   ├── search_replace.lua    # SEARCH/REPLACE text transformation
-│   ├── diff.lua              # Visual diff with DiffAdd/DiffDelete
-│   ├── chat.lua              # Chat buffer & messaging
-│   ├── scanner.lua           # TODO: @ai detection
-│   ├── visual.lua            # Visual mode processing
-│   ├── config.lua            # Configuration management
-│   ├── lsp_context.lua       # LSP diagnostics collection
-│   ├── context_compact.lua   # Project context generation
-│   ├── dry_tagger.lua        # DRY tag suggestions
-│   ├── integrations.lua      # Optional plugin integrations
-│   ├── logger.lua            # Debug logging
-│   └── dependencies.lua      # Dependency checking
-├── rust/
-│   └── src/
-│       ├── main.rs           # Unix socket server
-│       ├── rpc.rs            # JSON-RPC handler
-│       ├── providers/        # Claude, OpenAI, Ollama, Claude CLI
-│       ├── prompt.rs         # Prompt building
-│       ├── parser.rs         # Response parsing
-│       ├── schema.rs         # JSON schema validation
-│       └── ...
-├── plugin/todo-ai.vim        # Vim commands & keymaps
-├── tests/                    # Plenary.nvim tests
+│   ├── init.lua             # Tmux pane management + remote functions
+│   ├── visual.lua           # Visual selection → prompt
+│   └── config.lua           # Configuration
+├── plugin/todo-ai.vim       # Commands + keymaps
+├── tests/plenary/
+├── INSTALL.md
 └── Makefile
 ```
 
-### Make Targets
+## Development
 
-```bash
-make build           # Build release Rust backend (default)
-make build-debug     # Build debug Rust backend (faster compile)
-make test            # Run all tests (Lua + Rust)
-make test-lua        # Run Lua/Neovim tests only
-make test-rust       # Run Rust tests only
-make test-single FILE=tests/plenary/some_spec.lua
-make lint            # Find dead Lua code
-make install         # Build and install to Neovim packages dir
-make dev             # Symlink local copy for development
-make clean           # Remove build artifacts
-make help            # Show all targets
+```
+make test                     Run tests
+make test-single FILE=...     Run one test file
+make lint                     Find dead Lua code
+make dev                      Symlink for development
+make install                  Install to Neovim packages
 ```
 
-### Debug Logging
-
-```lua
-require('todo-ai').setup({ log_level = 'DEBUG' })
-```
-
-```vim
-:TodoAILogs
-" or
-tail -f /tmp/todo-ai.log
-```
-
-## 📄 License
+## License
 
 MIT
-
-## 🙏 Credits
-
-**Inspired by:** [aider](https://github.com/paul-gauthier/aider) (SEARCH/REPLACE approach), [codecompanion.nvim](https://github.com/olimorris/codecompanion.nvim)
-
-**Built with:** [Neovim](https://neovim.io/), [Plenary.nvim](https://github.com/nvim-lua/plenary.nvim), [Claude](https://anthropic.com), [OpenAI](https://openai.com), [Ollama](https://ollama.ai)
