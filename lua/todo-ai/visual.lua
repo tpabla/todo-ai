@@ -26,7 +26,7 @@ function M.process()
       'In %s (lines %d-%d):\n```\n%s\n```\n\n%s',
       sel.file, sel.start_line, sel.end_line, sel.text, instruction
     )
-    require('todo-ai').open_pi(prompt)
+    require('todo-ai').open_agent(prompt)
   end)
 end
 

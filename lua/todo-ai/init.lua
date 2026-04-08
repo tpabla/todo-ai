@@ -100,20 +100,34 @@ function M._extension_path()
 end
 
 function M._build_cmd(initial_prompt)
-    local cmd = { 'pi', '-e', M._extension_path(), '--resume' }
+    local harness = config.get('harness')
 
-    local cfg = config.config
-    if cfg.pi_extra_args then
-        for _, arg in ipairs(cfg.pi_extra_args) do
+    if harness == config.HARNESS_PI then
+        local cmd = { 'pi', '-e', M._extension_path(), '--resume' }
+        for _, arg in ipairs(config.get('pi_extra_args') or {}) do
             table.insert(cmd, arg)
         end
+        if initial_prompt then
+            table.insert(cmd, initial_prompt)
+        end
+        return cmd
+    elseif harness == config.HARNESS_CLAUDE_CODE then
+        local cmd = { 'claude' }
+        local model = config.get('claude_model')
+        if model then
+            table.insert(cmd, '--model')
+            table.insert(cmd, model)
+        end
+        for _, arg in ipairs(config.get('claude_extra_args') or {}) do
+            table.insert(cmd, arg)
+        end
+        if initial_prompt then
+            table.insert(cmd, initial_prompt)
+        end
+        return cmd
     end
 
-    if initial_prompt then
-        table.insert(cmd, initial_prompt)
-    end
-
-    return cmd
+    error('todo-ai: unknown harness: ' .. tostring(harness))
 end
 
 function M._write_prompt(text)
@@ -127,7 +141,7 @@ function M._write_prompt(text)
     os.rename(staging, tmpfile)
 end
 
-function M.open_pi(initial_prompt)
+function M.open_agent(initial_prompt)
     if not M._in_tmux() then
         error('todo-ai requires tmux. Start Neovim inside a tmux session.')
     end
@@ -136,19 +150,25 @@ function M.open_pi(initial_prompt)
     vim.fn.mkdir(dir, 'p')
     vim.fn.writefile({ vim.v.servername }, dir .. '/nvim-socket')
 
-    -- Reconnect if pi is already running for this CWD
+    local harness = config.get('harness')
+
+    -- Reconnect if agent is already running for this CWD
     if M._is_pane_alive() then
         if initial_prompt then
-            M._write_prompt(initial_prompt)
+            if harness == config.HARNESS_PI then
+                M._write_prompt(initial_prompt)
+            elseif harness == config.HARNESS_CLAUDE_CODE then
+                M._send_keys(initial_prompt)
+            end
         end
         vim.fn.system({ 'tmux', 'select-pane', '-t', M.state.tmux_pane })
         return
     end
 
-    -- Spawn new pi
+    -- Spawn new agent
     local cmd = M._build_cmd(initial_prompt)
     local socket = vim.v.servername
-    local width = config.get('pi_width') or 80
+    local width = config.get('pane_width')
     local tag = config.get('tag')
 
     local parts = {
@@ -174,28 +194,52 @@ function M.open_pi(initial_prompt)
     vim.fn.writefile({ result }, dir .. '/pane-id')
 end
 
+-- Backward-compatible alias
+M.open_pi = M.open_agent
+
+function M._send_keys(text)
+    -- Send literal text + Enter to the agent's tmux pane.
+    -- Uses tmux's '-l' (literal) flag so special chars don't get interpreted.
+    if not M.state.tmux_pane then return end
+    vim.fn.system({ 'tmux', 'send-keys', '-t', M.state.tmux_pane, '-l', text })
+    vim.fn.system({ 'tmux', 'send-keys', '-t', M.state.tmux_pane, 'Enter' })
+end
+
 function M.send_prompt(text)
     if not M._is_pane_alive() then
-        M.open_pi(text)
+        M.open_agent(text)
         return
     end
-    M._write_prompt(text)
+    local harness = config.get('harness')
+    if harness == config.HARNESS_PI then
+        M._write_prompt(text)
+    elseif harness == config.HARNESS_CLAUDE_CODE then
+        M._send_keys(text)
+    end
 end
 
 function M.scan()
     if not M._is_pane_alive() then
-        M.open_pi()
+        M.open_agent()
     end
-    M._write_prompt('__SCAN__')
+    local harness = config.get('harness')
+    if harness == config.HARNESS_PI then
+        M._write_prompt('__SCAN__')
+    elseif harness == config.HARNESS_CLAUDE_CODE then
+        M._send_keys('/scan')
+    end
 end
 
-function M.focus_pi()
+function M.focus_agent()
     if M._is_pane_alive() then
         vim.fn.system({ 'tmux', 'select-pane', '-t', M.state.tmux_pane })
     else
-        M.open_pi()
+        M.open_agent()
     end
 end
+
+-- Backward-compatible alias
+M.focus_pi = M.focus_agent
 
 -- Remote functions (called by pi extension via nvim --server) -----------------
 

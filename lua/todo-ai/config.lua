@@ -1,9 +1,20 @@
 local M = {}
 
+-- Harness identifiers (use these constants instead of string literals)
+M.HARNESS_PI = 'pi'
+M.HARNESS_CLAUDE_CODE = 'claude_code'
+
 M.defaults = {
-  pi_extra_args = {},
-  pi_width = 80,
+  harness = M.HARNESS_CLAUDE_CODE,
   tag = 'AGENT',
+  pane_width = 80,
+
+  -- Pi-specific
+  pi_extra_args = {},
+
+  -- Claude Code-specific
+  claude_extra_args = {},
+  claude_model = nil,
 }
 
 M.config = {}
@@ -13,7 +24,9 @@ function M.setup(opts)
 end
 
 function M.get(key)
-  return M.config[key]
+  local v = M.config[key]
+  if v == nil then return M.defaults[key] end
+  return v
 end
 
 return M
