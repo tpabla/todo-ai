@@ -1,0 +1,21 @@
+{
+  "name": "todo-ai-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server exposing Neovim editor tools to Claude Code",
+  "type": "module",
+  "main": "server.js",
+  "bin": {
+    "todo-ai-mcp-server": "server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

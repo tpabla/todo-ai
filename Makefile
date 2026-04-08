@@ -1,8 +1,14 @@
-.PHONY: test test-single lint dev install clean help
+.PHONY: test test-lua test-mcp test-single lint dev install clean help
 
-test: ## Run tests
+test: test-lua test-mcp ## Run all tests
+
+test-lua: ## Run Lua tests
 	@nvim --headless -u tests/minimal_init.lua \
 		-c 'PlenaryBustedDirectory tests/plenary/ {minimal_init="tests/minimal_init.lua", sequential=true}'
+
+test-mcp: ## Run MCP server tests
+	@cd mcp-server && [ -d node_modules ] || npm install --silent
+	@cd mcp-server && node test.js
 
 test-single: ## Run one test (FILE=tests/plenary/xxx_spec.lua)
 	@nvim --headless -u tests/minimal_init.lua \
