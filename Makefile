@@ -1,6 +1,9 @@
-.PHONY: test test-lua test-mcp test-single lint dev install clean help
+.PHONY: test test-lua test-mcp test-hooks test-single lint dev install clean help
 
-test: test-lua test-mcp ## Run all tests
+test: test-lua test-mcp test-hooks ## Run all tests
+
+test-hooks: ## Run hook script tests
+	@bash hooks/test.sh
 
 test-lua: ## Run Lua tests
 	@nvim --headless -u tests/minimal_init.lua \
