@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "neovim": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server/server.js"],
+      "env": {
+        "TODO_AI_TAG": "AGENT"
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "todo-ai-nvim",
+  "description": "Neovim integration for Claude Code — open files, auto-reload buffers, diff review, and editor context via MCP",
+  "version": "1.0.0",
+  "author": {
+    "name": "todo-ai"
+  },
+  "license": "MIT",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills",
+  "rules": "./rules"
+}
