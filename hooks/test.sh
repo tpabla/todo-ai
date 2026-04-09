@@ -45,6 +45,19 @@ else
     fail "hook exits 0 with empty json" "exit $?"
 fi
 
+# 5. inject-context.sh emits the workflow rule on stdout regardless of stdin.
+out=$(echo '{}' | ./inject-context.sh)
+if echo "$out" | grep -q "neovim_open_file"; then
+    ok "inject-context.sh emits workflow rules"
+else
+    fail "inject-context.sh emits workflow rules" "stdout missing 'neovim_open_file'"
+fi
+if echo "$out" | grep -q "neovim-workflow"; then
+    ok "inject-context.sh wraps output in neovim-workflow tag"
+else
+    fail "inject-context.sh wraps output in neovim-workflow tag" "missing tag"
+fi
+
 echo
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

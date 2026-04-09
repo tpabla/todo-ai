@@ -158,9 +158,8 @@ todo-ai/
 ├── plugin/todo-ai.vim       # Commands + keymaps
 ├── extension/neovim.ts      # Pi adapter (pi extension)
 ├── mcp-server/              # Claude Code adapter — MCP server (Node)
-├── hooks/                   # Claude Code adapter — PostToolUse hooks
+├── hooks/                   # Claude Code adapter — Post/Submit hooks
 ├── skills/scan/             # Claude Code adapter — /scan skill
-├── rules/                   # Claude Code adapter — workflow rules
 ├── .claude-plugin/          # Claude Code plugin manifest
 ├── .mcp.json                # MCP server registration
 ├── tests/plenary/
