@@ -135,7 +135,21 @@ function M.install()
         return false
     end
     notify('mcp-server deps installed')
+    M._print_permissions_hint()
     return true
+end
+
+function M._print_permissions_hint()
+    vim.notify(
+        '[todo-ai] To skip permission prompts for the Neovim MCP tools, add this\n' ..
+        'to ~/.claude/settings.json (one-time, optional):\n\n' ..
+        '  {\n' ..
+        '    "permissions": {\n' ..
+        '      "allow": ["mcp__plugin_todo-ai-nvim_neovim__*"]\n' ..
+        '    }\n' ..
+        '  }',
+        vim.log.levels.INFO
+    )
 end
 
 function M._check_install()

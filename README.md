@@ -134,6 +134,20 @@ The plugin is loaded **in-place** every time `:TodoAI` launches `claude`, via `c
 
 If you want the same plugin available when you run `claude` from a regular terminal (outside Neovim), alias it: `alias claude='claude --plugin-dir ~/.local/share/nvim/lazy/todo-ai'`.
 
+#### Auto-approve the Neovim MCP tools (optional)
+
+By default Claude Code will prompt for permission the first time it calls `neovim_open_file`, `neovim_diff_review`, or `neovim_get_context`. To skip those prompts, add this to `~/.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": ["mcp__plugin_todo-ai-nvim_neovim__*"]
+  }
+}
+```
+
+Plugin manifests don't yet support shipping permissions, so this is a one-time manual step.
+
 ## What the extension does
 
 The [pi extension](extension/neovim.ts) (~280 lines of TypeScript):
