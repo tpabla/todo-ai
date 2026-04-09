@@ -47,6 +47,19 @@ describe("init", function()
       assert.equals('claude', cmd[1])
     end)
 
+    it("includes --plugin-dir pointing at plugin root", function()
+      require('todo-ai.config').setup({})
+      local cmd = init._build_cmd(nil)
+      assert.is_true(vim.tbl_contains(cmd, '--plugin-dir'))
+      -- The arg after --plugin-dir should be the plugin root and contain mcp-server
+      for i, v in ipairs(cmd) do
+        if v == '--plugin-dir' then
+          assert.is_true(vim.fn.isdirectory(cmd[i + 1] .. '/mcp-server') == 1)
+          return
+        end
+      end
+    end)
+
     it("includes --model when claude_model set", function()
       require('todo-ai.config').setup({ claude_model = 'sonnet' })
       local cmd = init._build_cmd(nil)

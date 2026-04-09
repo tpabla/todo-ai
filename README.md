@@ -122,21 +122,17 @@ The Claude Code adapter ships as a Claude Code plugin in this repo, bundling:
 - **`/scan` skill** (`skills/scan/`) for AGENT-tag resolution
 - **Workflow rules** (`rules/neovim-workflow.md`) telling Claude to fetch editor context per task
 
-After lazy.nvim clones the repo, run **`:TodoAIInstall`** once. It will:
+**Setup is one command.** After lazy.nvim clones the repo, run:
 
-1. `npm install` in `mcp-server/` (skipped if `node_modules/` exists)
-2. Register this directory as a Claude Code marketplace via `claude plugin marketplace add`
-3. Install the `todo-ai-nvim` plugin via `claude plugin install`
-
-If `setup()` detects either piece is missing, it prints a warning pointing you at `:TodoAIInstall`. Nothing is auto-installed at startup.
-
-If the `claude plugin` CLI subcommands are unavailable in your version, run the install steps manually inside `claude`:
-
+```vim
+:TodoAIInstall
 ```
-/plugin marketplace add /path/to/todo-ai
-/plugin install todo-ai-nvim@todo-ai
-/reload-plugins
-```
+
+That runs `npm install` in `mcp-server/` (skipped if `node_modules/` exists) and that's it. Nothing is written under `~/.claude/`.
+
+The plugin is loaded **in-place** every time `:TodoAI` launches `claude`, via `claude --plugin-dir <plugin_root>`. Edits to the plugin source are picked up on the next launch (or `/reload-plugins` inside `claude`). No copy, no marketplace registration, no global state.
+
+If you want the same plugin available when you run `claude` from a regular terminal (outside Neovim), alias it: `alias claude='claude --plugin-dir ~/.local/share/nvim/lazy/todo-ai'`.
 
 ## What the extension does
 
