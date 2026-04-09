@@ -7,32 +7,93 @@ describe("init", function()
     init = require('todo-ai.init')
   end)
 
-  it("builds command with no config", function()
-    require('todo-ai.config').setup({})
-    local cmd = init._build_cmd(nil)
-    assert.equals('pi', cmd[1])
-    assert.equals('-e', cmd[2])
-    assert.is_true(cmd[3]:match('neovim%.ts$') ~= nil)
-    assert.equals('--resume', cmd[4])
+  describe("_build_cmd (pi harness)", function()
+    it("builds pi command", function()
+      require('todo-ai.config').setup({ harness = 'pi' })
+      local cmd = init._build_cmd(nil)
+      assert.equals('pi', cmd[1])
+      assert.equals('-e', cmd[2])
+      assert.is_true(cmd[3]:match('neovim%.ts$') ~= nil)
+      assert.equals('--resume', cmd[4])
+    end)
+
+    it("appends initial prompt as last arg", function()
+      require('todo-ai.config').setup({ harness = 'pi' })
+      local cmd = init._build_cmd('fix the bug')
+      assert.equals('fix the bug', cmd[#cmd])
+    end)
+
+    it("includes pi_extra_args", function()
+      require('todo-ai.config').setup({
+        harness = 'pi',
+        pi_extra_args = { '--continue', '--no-session' },
+      })
+      local cmd = init._build_cmd(nil)
+      assert.is_true(vim.tbl_contains(cmd, '--continue'))
+      assert.is_true(vim.tbl_contains(cmd, '--no-session'))
+    end)
+
+    it("always includes --resume", function()
+      require('todo-ai.config').setup({ harness = 'pi' })
+      local cmd = init._build_cmd(nil)
+      assert.is_true(vim.tbl_contains(cmd, '--resume'))
+    end)
   end)
 
-  it("appends initial prompt as last arg", function()
-    require('todo-ai.config').setup({})
-    local cmd = init._build_cmd('fix the bug')
-    assert.equals('fix the bug', cmd[#cmd])
+  describe("_build_cmd (claude_code harness)", function()
+    it("builds claude command (default harness)", function()
+      require('todo-ai.config').setup({})
+      local cmd = init._build_cmd(nil)
+      assert.equals('claude', cmd[1])
+    end)
+
+    it("includes --plugin-dir pointing at plugin root", function()
+      require('todo-ai.config').setup({})
+      local cmd = init._build_cmd(nil)
+      assert.is_true(vim.tbl_contains(cmd, '--plugin-dir'))
+      -- The arg after --plugin-dir should be the plugin root and contain mcp-server
+      for i, v in ipairs(cmd) do
+        if v == '--plugin-dir' then
+          assert.is_true(vim.fn.isdirectory(cmd[i + 1] .. '/mcp-server') == 1)
+          return
+        end
+      end
+    end)
+
+    it("includes --model when claude_model set", function()
+      require('todo-ai.config').setup({ claude_model = 'sonnet' })
+      local cmd = init._build_cmd(nil)
+      assert.is_true(vim.tbl_contains(cmd, '--model'))
+      assert.is_true(vim.tbl_contains(cmd, 'sonnet'))
+    end)
+
+    it("omits --model when not set", function()
+      require('todo-ai.config').setup({})
+      local cmd = init._build_cmd(nil)
+      assert.is_false(vim.tbl_contains(cmd, '--model'))
+    end)
+
+    it("includes claude_extra_args", function()
+      require('todo-ai.config').setup({ claude_extra_args = { '--verbose' } })
+      local cmd = init._build_cmd(nil)
+      assert.is_true(vim.tbl_contains(cmd, '--verbose'))
+    end)
+
+    it("appends initial prompt as last arg", function()
+      require('todo-ai.config').setup({})
+      local cmd = init._build_cmd('hello world')
+      assert.equals('hello world', cmd[#cmd])
+    end)
   end)
 
-  it("includes extra args", function()
-    require('todo-ai.config').setup({ pi_extra_args = { '--continue', '--no-session' } })
-    local cmd = init._build_cmd(nil)
-    assert.is_true(vim.tbl_contains(cmd, '--continue'))
-    assert.is_true(vim.tbl_contains(cmd, '--no-session'))
+  it("errors on unknown harness", function()
+    require('todo-ai.config').setup({ harness = 'bogus' })
+    assert.has_error(function() init._build_cmd(nil) end)
   end)
 
-  it("always includes --resume", function()
-    require('todo-ai.config').setup({})
-    local cmd = init._build_cmd(nil)
-    assert.is_true(vim.tbl_contains(cmd, '--resume'))
+  it("exposes backward-compatible aliases", function()
+    assert.equals(init.open_agent, init.open_pi)
+    assert.equals(init.focus_agent, init.focus_pi)
   end)
 
   it("returns valid context JSON", function()
@@ -44,7 +105,6 @@ describe("init", function()
 
   it("reports no pane alive when no state", function()
     init.state.tmux_pane = nil
-    -- Remove any leftover pane-id file
     local pane_file = init._state_dir() .. '/pane-id'
     os.remove(pane_file)
     assert.is_false(init._is_pane_alive())
@@ -65,5 +125,28 @@ describe("init", function()
 
   it("returns nil for missing files", function()
     assert.is_nil(init._read_file('/tmp/nonexistent-todo-ai-test'))
+  end)
+
+  describe("install helpers", function()
+    it("plugin_root points at a directory containing mcp-server", function()
+      local root = init._plugin_root()
+      assert.is_true(vim.fn.isdirectory(root .. '/mcp-server') == 1)
+      assert.is_true(vim.fn.isdirectory(root .. '/lua/todo-ai') == 1)
+    end)
+
+    it("_mcp_deps_installed returns a boolean", function()
+      local v = init._mcp_deps_installed()
+      assert.is_true(v == true or v == false)
+    end)
+
+    it("install function exists", function()
+      assert.equals('function', type(init.install))
+    end)
+
+    it("_check_install is a no-op for pi harness", function()
+      require('todo-ai.config').setup({ harness = 'pi' })
+      -- Should not raise even if mcp deps are missing.
+      assert.has_no.errors(function() init._check_install() end)
+    end)
   end)
 end)

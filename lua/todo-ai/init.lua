@@ -52,6 +52,9 @@ function M.setup(opts)
             os.remove(M._state_dir() .. '/nvim-socket')
         end,
     })
+
+    -- Deferred install check so startup is never blocked.
+    vim.defer_fn(function() M._check_install() end, 100)
 end
 
 -- Tmux pane management --------------------------------------------------------
@@ -93,27 +96,105 @@ function M._is_pane_alive()
     return true
 end
 
-function M._extension_path()
+function M._plugin_root()
     local source = debug.getinfo(1, 'S').source:sub(2)
-    local plugin_root = vim.fn.fnamemodify(source, ':h:h:h')
-    return plugin_root .. '/extension/neovim.ts'
+    return vim.fn.fnamemodify(source, ':h:h:h')
+end
+
+function M._extension_path()
+    return M._plugin_root() .. '/extension/neovim.ts'
+end
+
+-- Install state ---------------------------------------------------------------
+
+function M._mcp_deps_installed()
+    return vim.fn.isdirectory(M._plugin_root() .. '/mcp-server/node_modules') == 1
+end
+
+function M.install()
+    local root = M._plugin_root()
+    local notify = function(msg, level)
+        vim.notify('[todo-ai] ' .. msg, level or vim.log.levels.INFO)
+    end
+
+    -- The only install step is `npm install` for the MCP server. The Claude
+    -- Code plugin itself is loaded in-place via `claude --plugin-dir <root>`
+    -- (baked into the launch command), so nothing is copied to ~/.claude/.
+    if M._mcp_deps_installed() then
+        notify('mcp-server deps already installed')
+        return true
+    end
+    if vim.fn.executable('npm') ~= 1 then
+        notify('npm not found on PATH — cannot install mcp-server deps', vim.log.levels.ERROR)
+        return false
+    end
+    notify('installing mcp-server deps (npm install)...')
+    local out = vim.fn.system({ 'npm', '--prefix', root .. '/mcp-server', 'install', '--silent' })
+    if vim.v.shell_error ~= 0 then
+        notify('npm install failed:\n' .. out, vim.log.levels.ERROR)
+        return false
+    end
+    notify('mcp-server deps installed')
+    M._print_permissions_hint()
+    return true
+end
+
+function M._print_permissions_hint()
+    vim.notify(
+        '[todo-ai] To skip permission prompts for the Neovim MCP tools, add this\n' ..
+        'to ~/.claude/settings.json (one-time, optional):\n\n' ..
+        '  {\n' ..
+        '    "permissions": {\n' ..
+        '      "allow": ["mcp__plugin_todo-ai-nvim_neovim__*"]\n' ..
+        '    }\n' ..
+        '  }',
+        vim.log.levels.INFO
+    )
+end
+
+function M._check_install()
+    -- Only relevant for the claude_code harness.
+    if config.get('harness') ~= config.HARNESS_CLAUDE_CODE then return end
+    if not M._mcp_deps_installed() then
+        vim.notify(
+            '[todo-ai] mcp-server deps not installed. Run :TodoAIInstall.',
+            vim.log.levels.WARN
+        )
+    end
 end
 
 function M._build_cmd(initial_prompt)
-    local cmd = { 'pi', '-e', M._extension_path(), '--resume' }
+    local harness = config.get('harness')
 
-    local cfg = config.config
-    if cfg.pi_extra_args then
-        for _, arg in ipairs(cfg.pi_extra_args) do
+    if harness == config.HARNESS_PI then
+        local cmd = { 'pi', '-e', M._extension_path(), '--resume' }
+        for _, arg in ipairs(config.get('pi_extra_args') or {}) do
             table.insert(cmd, arg)
         end
+        if initial_prompt then
+            table.insert(cmd, initial_prompt)
+        end
+        return cmd
+    elseif harness == config.HARNESS_CLAUDE_CODE then
+        -- --plugin-dir loads the bundled Claude Code plugin (MCP server,
+        -- hooks, /scan skill, workflow rules) in-place from the lazy.nvim
+        -- clone, so no copy lands under ~/.claude/.
+        local cmd = { 'claude', '--plugin-dir', M._plugin_root() }
+        local model = config.get('claude_model')
+        if model then
+            table.insert(cmd, '--model')
+            table.insert(cmd, model)
+        end
+        for _, arg in ipairs(config.get('claude_extra_args') or {}) do
+            table.insert(cmd, arg)
+        end
+        if initial_prompt then
+            table.insert(cmd, initial_prompt)
+        end
+        return cmd
     end
 
-    if initial_prompt then
-        table.insert(cmd, initial_prompt)
-    end
-
-    return cmd
+    error('todo-ai: unknown harness: ' .. tostring(harness))
 end
 
 function M._write_prompt(text)
@@ -127,7 +208,7 @@ function M._write_prompt(text)
     os.rename(staging, tmpfile)
 end
 
-function M.open_pi(initial_prompt)
+function M.open_agent(initial_prompt)
     if not M._in_tmux() then
         error('todo-ai requires tmux. Start Neovim inside a tmux session.')
     end
@@ -136,19 +217,25 @@ function M.open_pi(initial_prompt)
     vim.fn.mkdir(dir, 'p')
     vim.fn.writefile({ vim.v.servername }, dir .. '/nvim-socket')
 
-    -- Reconnect if pi is already running for this CWD
+    local harness = config.get('harness')
+
+    -- Reconnect if agent is already running for this CWD
     if M._is_pane_alive() then
         if initial_prompt then
-            M._write_prompt(initial_prompt)
+            if harness == config.HARNESS_PI then
+                M._write_prompt(initial_prompt)
+            elseif harness == config.HARNESS_CLAUDE_CODE then
+                M._send_keys(initial_prompt)
+            end
         end
         vim.fn.system({ 'tmux', 'select-pane', '-t', M.state.tmux_pane })
         return
     end
 
-    -- Spawn new pi
+    -- Spawn new agent
     local cmd = M._build_cmd(initial_prompt)
     local socket = vim.v.servername
-    local width = config.get('pi_width') or 80
+    local width = config.get('pane_width')
     local tag = config.get('tag')
 
     local parts = {
@@ -174,28 +261,52 @@ function M.open_pi(initial_prompt)
     vim.fn.writefile({ result }, dir .. '/pane-id')
 end
 
+-- Backward-compatible alias
+M.open_pi = M.open_agent
+
+function M._send_keys(text)
+    -- Send literal text + Enter to the agent's tmux pane.
+    -- Uses tmux's '-l' (literal) flag so special chars don't get interpreted.
+    if not M.state.tmux_pane then return end
+    vim.fn.system({ 'tmux', 'send-keys', '-t', M.state.tmux_pane, '-l', text })
+    vim.fn.system({ 'tmux', 'send-keys', '-t', M.state.tmux_pane, 'Enter' })
+end
+
 function M.send_prompt(text)
     if not M._is_pane_alive() then
-        M.open_pi(text)
+        M.open_agent(text)
         return
     end
-    M._write_prompt(text)
+    local harness = config.get('harness')
+    if harness == config.HARNESS_PI then
+        M._write_prompt(text)
+    elseif harness == config.HARNESS_CLAUDE_CODE then
+        M._send_keys(text)
+    end
 end
 
 function M.scan()
     if not M._is_pane_alive() then
-        M.open_pi()
+        M.open_agent()
     end
-    M._write_prompt('__SCAN__')
+    local harness = config.get('harness')
+    if harness == config.HARNESS_PI then
+        M._write_prompt('__SCAN__')
+    elseif harness == config.HARNESS_CLAUDE_CODE then
+        M._send_keys('/scan')
+    end
 end
 
-function M.focus_pi()
+function M.focus_agent()
     if M._is_pane_alive() then
         vim.fn.system({ 'tmux', 'select-pane', '-t', M.state.tmux_pane })
     else
-        M.open_pi()
+        M.open_agent()
     end
 end
+
+-- Backward-compatible alias
+M.focus_pi = M.focus_agent
 
 -- Remote functions (called by pi extension via nvim --server) -----------------
 

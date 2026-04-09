@@ -1,8 +1,22 @@
-.PHONY: test test-single lint dev install clean help
+.PHONY: test test-lua test-mcp test-hooks test-plugin test-single lint dev install clean help
 
-test: ## Run tests
+test: test-lua test-mcp test-hooks test-plugin ## Run all tests
+
+test-plugin: ## Validate plugin manifest JSON files
+	@python3 -c "import json; \
+		[json.load(open(f)) for f in ['.claude-plugin/plugin.json', '.mcp.json', 'hooks/hooks.json', 'mcp-server/package.json']]; \
+		print('  ok  plugin manifest JSON files are valid')"
+
+test-hooks: ## Run hook script tests
+	@bash hooks/test.sh
+
+test-lua: ## Run Lua tests
 	@nvim --headless -u tests/minimal_init.lua \
 		-c 'PlenaryBustedDirectory tests/plenary/ {minimal_init="tests/minimal_init.lua", sequential=true}'
+
+test-mcp: ## Run MCP server tests
+	@cd mcp-server && [ -d node_modules ] || npm install --silent
+	@cd mcp-server && node test.js
 
 test-single: ## Run one test (FILE=tests/plenary/xxx_spec.lua)
 	@nvim --headless -u tests/minimal_init.lua \
