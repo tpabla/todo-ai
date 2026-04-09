@@ -1,6 +1,11 @@
 # todo-ai
 
-Neovim + [pi coding agent](https://github.com/mariozechner/pi-coding-agent) via tmux. Pi runs in its own tmux pane with full access to your editor state. It edits files directly; you review with [diffview.nvim](https://github.com/sindrets/diffview.nvim).
+Neovim + an AI coding agent via tmux. The agent runs in its own tmux pane with full access to your editor state. It edits files directly; you review with [diffview.nvim](https://github.com/sindrets/diffview.nvim).
+
+**Two harnesses are supported** — pick one in your config:
+
+- **`claude_code`** (default) — [Claude Code CLI](https://claude.com/claude-code), wired up via a bundled Claude Code plugin (MCP server + hooks + skills)
+- **`pi`** — [pi coding agent](https://github.com/mariozechner/pi-coding-agent), wired up via the existing pi extension
 
 ## How it works
 
@@ -94,11 +99,29 @@ Provider, model, and thinking are configured through pi directly — see [pi doc
 
 ```lua
 require("todo-ai").setup({
+  harness = "claude_code",       -- "claude_code" (default) | "pi"
   tag = "AGENT",                 -- comment tag for scanning (AGENT:)
-  pi_extra_args = {},            -- extra CLI args passed to pi
-  pi_width = 80,                -- tmux pane width in columns
+  pane_width = 80,               -- tmux pane width in columns
+
+  -- Claude Code harness
+  claude_model = nil,            -- override model, e.g. "sonnet"
+  claude_extra_args = {},        -- extra CLI args passed to `claude`
+
+  -- Pi harness
+  pi_extra_args = {},            -- extra CLI args passed to `pi`
 })
 ```
+
+### Claude Code harness
+
+The Claude Code adapter ships as a Claude Code plugin in this repo. Install it by pointing Claude Code at this directory as a plugin source — it auto-registers:
+
+- **MCP server** (`mcp-server/`) exposing `neovim_open_file`, `neovim_diff_review`, `neovim_get_context`
+- **PostToolUse hook** (`hooks/post-edit.sh`) that calls `:checktime` after every Edit/Write
+- **`/scan` skill** (`skills/scan/`) for AGENT-tag resolution
+- **Workflow rules** (`rules/neovim-workflow.md`) telling Claude to fetch editor context per task
+
+Run `cd mcp-server && npm install` once to install MCP server dependencies.
 
 ## What the extension does
 
@@ -117,12 +140,18 @@ The [pi extension](extension/neovim.ts) (~280 lines of TypeScript):
 
 ```
 todo-ai/
-├── extension/neovim.ts      # Pi extension — context, tools, commands
-├── lua/todo-ai/
-│   ├── init.lua             # Tmux pane management + remote functions
-│   ├── visual.lua           # Visual selection → prompt
-│   └── config.lua           # Configuration
+├── lua/todo-ai/             # Neovim plugin (harness-agnostic)
+│   ├── init.lua             #   tmux pane management + remote functions
+│   ├── visual.lua           #   visual selection → prompt
+│   └── config.lua           #   configuration + harness constants
 ├── plugin/todo-ai.vim       # Commands + keymaps
+├── extension/neovim.ts      # Pi adapter (pi extension)
+├── mcp-server/              # Claude Code adapter — MCP server (Node)
+├── hooks/                   # Claude Code adapter — PostToolUse hooks
+├── skills/scan/             # Claude Code adapter — /scan skill
+├── rules/                   # Claude Code adapter — workflow rules
+├── .claude-plugin/          # Claude Code plugin manifest
+├── .mcp.json                # MCP server registration
 ├── tests/plenary/
 ├── INSTALL.md
 └── Makefile
