@@ -53,10 +53,11 @@ See **[INSTALL.md](INSTALL.md)** for detailed setup.
 
 | Key | Command | Description |
 |-----|---------|-------------|
-| `<leader>tc` | `:TodoAI` | Open pi in a tmux pane (or reuse existing) |
-| `<leader>tf` | `:TodoAIFocus` | Switch tmux focus to pi's pane |
-| `<leader>ts` | `:TodoAIScan` | Find `AGENT:` comments, send to pi to resolve |
-| `<leader>ti` | `:TodoAIVisual` | Send visual selection to pi |
+| `<leader>tc` | `:TodoAI` | Open the agent in a tmux pane (or reuse existing) |
+| `<leader>tf` | `:TodoAIFocus` | Switch tmux focus to the agent's pane |
+| `<leader>ts` | `:TodoAIScan` | Find `AGENT:` comments, send them to the agent |
+| `<leader>ti` | `:TodoAIVisual` | Send visual selection to the agent |
+|              | `:TodoAIInstall` | Install the Claude Code plugin (MCP deps + register) |
 
 ### Workflow
 
@@ -114,14 +115,28 @@ require("todo-ai").setup({
 
 ### Claude Code harness
 
-The Claude Code adapter ships as a Claude Code plugin in this repo. Install it by pointing Claude Code at this directory as a plugin source — it auto-registers:
+The Claude Code adapter ships as a Claude Code plugin in this repo, bundling:
 
 - **MCP server** (`mcp-server/`) exposing `neovim_open_file`, `neovim_diff_review`, `neovim_get_context`
 - **PostToolUse hook** (`hooks/post-edit.sh`) that calls `:checktime` after every Edit/Write
 - **`/scan` skill** (`skills/scan/`) for AGENT-tag resolution
 - **Workflow rules** (`rules/neovim-workflow.md`) telling Claude to fetch editor context per task
 
-Run `cd mcp-server && npm install` once to install MCP server dependencies.
+After lazy.nvim clones the repo, run **`:TodoAIInstall`** once. It will:
+
+1. `npm install` in `mcp-server/` (skipped if `node_modules/` exists)
+2. Register this directory as a Claude Code marketplace via `claude plugin marketplace add`
+3. Install the `todo-ai-nvim` plugin via `claude plugin install`
+
+If `setup()` detects either piece is missing, it prints a warning pointing you at `:TodoAIInstall`. Nothing is auto-installed at startup.
+
+If the `claude plugin` CLI subcommands are unavailable in your version, run the install steps manually inside `claude`:
+
+```
+/plugin marketplace add /path/to/todo-ai
+/plugin install todo-ai-nvim@todo-ai
+/reload-plugins
+```
 
 ## What the extension does
 

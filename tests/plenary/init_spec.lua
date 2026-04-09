@@ -113,4 +113,27 @@ describe("init", function()
   it("returns nil for missing files", function()
     assert.is_nil(init._read_file('/tmp/nonexistent-todo-ai-test'))
   end)
+
+  describe("install helpers", function()
+    it("plugin_root points at a directory containing mcp-server", function()
+      local root = init._plugin_root()
+      assert.is_true(vim.fn.isdirectory(root .. '/mcp-server') == 1)
+      assert.is_true(vim.fn.isdirectory(root .. '/lua/todo-ai') == 1)
+    end)
+
+    it("_mcp_deps_installed returns a boolean", function()
+      local v = init._mcp_deps_installed()
+      assert.is_true(v == true or v == false)
+    end)
+
+    it("install function exists", function()
+      assert.equals('function', type(init.install))
+    end)
+
+    it("_check_install is a no-op for pi harness", function()
+      require('todo-ai.config').setup({ harness = 'pi' })
+      -- Should not raise even if mcp deps are missing.
+      assert.has_no.errors(function() init._check_install() end)
+    end)
+  end)
 end)

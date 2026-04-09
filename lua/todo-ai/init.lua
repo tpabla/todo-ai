@@ -52,6 +52,9 @@ function M.setup(opts)
             os.remove(M._state_dir() .. '/nvim-socket')
         end,
     })
+
+    -- Deferred install check so startup is never blocked.
+    vim.defer_fn(function() M._check_install() end, 100)
 end
 
 -- Tmux pane management --------------------------------------------------------
@@ -93,10 +96,108 @@ function M._is_pane_alive()
     return true
 end
 
-function M._extension_path()
+function M._plugin_root()
     local source = debug.getinfo(1, 'S').source:sub(2)
-    local plugin_root = vim.fn.fnamemodify(source, ':h:h:h')
-    return plugin_root .. '/extension/neovim.ts'
+    return vim.fn.fnamemodify(source, ':h:h:h')
+end
+
+function M._extension_path()
+    return M._plugin_root() .. '/extension/neovim.ts'
+end
+
+-- Install state ---------------------------------------------------------------
+
+function M._mcp_deps_installed()
+    return vim.fn.isdirectory(M._plugin_root() .. '/mcp-server/node_modules') == 1
+end
+
+function M._claude_plugin_installed()
+    -- Best-effort check: ~/.claude/plugins/cache/todo-ai-nvim or similar.
+    -- We just look for any path under ~/.claude that contains 'todo-ai-nvim'.
+    local home = os.getenv('HOME') or ''
+    local marker = home .. '/.claude/plugins/cache/todo-ai-nvim'
+    if vim.fn.isdirectory(marker) == 1 then return true end
+    -- Fall back: check for the marketplace registration via `claude plugin list`.
+    if vim.fn.executable('claude') == 1 then
+        local out = vim.fn.system({ 'claude', 'plugin', 'list' })
+        if vim.v.shell_error == 0 and out:find('todo%-ai%-nvim') then
+            return true
+        end
+    end
+    return false
+end
+
+function M.install()
+    local root = M._plugin_root()
+    local notify = function(msg, level)
+        vim.notify('[todo-ai] ' .. msg, level or vim.log.levels.INFO)
+    end
+
+    -- Step 1: npm install for the MCP server
+    if M._mcp_deps_installed() then
+        notify('mcp-server deps already installed')
+    else
+        if vim.fn.executable('npm') ~= 1 then
+            notify('npm not found on PATH — cannot install mcp-server deps', vim.log.levels.ERROR)
+            return false
+        end
+        notify('installing mcp-server deps (npm install)...')
+        local out = vim.fn.system({ 'npm', '--prefix', root .. '/mcp-server', 'install', '--silent' })
+        if vim.v.shell_error ~= 0 then
+            notify('npm install failed:\n' .. out, vim.log.levels.ERROR)
+            return false
+        end
+        notify('mcp-server deps installed')
+    end
+
+    -- Step 2: register + install the Claude Code plugin
+    if vim.fn.executable('claude') ~= 1 then
+        notify('claude CLI not found on PATH — skipping Claude Code plugin registration', vim.log.levels.WARN)
+        return false
+    end
+    if M._claude_plugin_installed() then
+        notify('claude plugin already installed')
+        return true
+    end
+    notify('registering plugin marketplace at ' .. root)
+    local add_out = vim.fn.system({ 'claude', 'plugin', 'marketplace', 'add', root })
+    if vim.v.shell_error ~= 0 then
+        notify(
+            'could not auto-register plugin marketplace.\n' ..
+            'Run these inside `claude` manually:\n' ..
+            '  /plugin marketplace add ' .. root .. '\n' ..
+            '  /plugin install todo-ai-nvim@todo-ai\n\n' ..
+            'CLI output:\n' .. add_out,
+            vim.log.levels.WARN
+        )
+        return false
+    end
+    local install_out = vim.fn.system({ 'claude', 'plugin', 'install', 'todo-ai-nvim@todo-ai' })
+    if vim.v.shell_error ~= 0 then
+        notify('claude plugin install failed:\n' .. install_out, vim.log.levels.ERROR)
+        return false
+    end
+    notify('claude plugin installed — restart claude or run /reload-plugins')
+    return true
+end
+
+function M._check_install()
+    -- Only relevant for the claude_code harness.
+    if config.get('harness') ~= config.HARNESS_CLAUDE_CODE then return end
+    local missing = {}
+    if not M._mcp_deps_installed() then
+        table.insert(missing, 'mcp-server deps')
+    end
+    if vim.fn.executable('claude') == 1 and not M._claude_plugin_installed() then
+        table.insert(missing, 'claude plugin registration')
+    end
+    if #missing > 0 then
+        vim.notify(
+            '[todo-ai] missing: ' .. table.concat(missing, ', ') ..
+            '. Run :TodoAIInstall to set up the Claude Code harness.',
+            vim.log.levels.WARN
+        )
+    end
 end
 
 function M._build_cmd(initial_prompt)
