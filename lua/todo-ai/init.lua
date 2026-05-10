@@ -197,7 +197,7 @@ function M._build_cmd(initial_prompt, session_mode)
     local harness = config.get('harness')
 
     if harness == config.HARNESS_PI then
-        local mode = session_mode or 'resume'
+        local mode = session_mode or config.get('session_mode') or 'resume'
         local cmd = { 'pi', '-e', M._extension_path() }
         if mode == 'resume' then
             table.insert(cmd, '--resume')
@@ -214,7 +214,7 @@ function M._build_cmd(initial_prompt, session_mode)
         -- hooks, /scan skill, workflow rules) in-place from the lazy.nvim
         -- clone, so no copy lands under ~/.claude/.
         local cmd = { 'claude', '--plugin-dir', M._plugin_root() }
-        local mode = session_mode or 'new'
+        local mode = session_mode or config.get('session_mode') or 'new'
         if mode == 'resume' then
             table.insert(cmd, '--continue')
         end
@@ -351,14 +351,7 @@ function M.open_agent_interactive(initial_prompt)
     end
 
     if #panes == 0 then
-        vim.ui.select(
-            { 'New session', 'Resume last' },
-            { prompt = 'todo-ai: start how?' },
-            function(choice)
-                if not choice then return end
-                M._spawn_agent(initial_prompt, choice == 'Resume last' and 'resume' or 'new')
-            end
-        )
+        M._spawn_agent(initial_prompt, nil)
 
     elseif #panes == 1 then
         M._join_pane(panes[1].id, initial_prompt)
@@ -369,16 +362,13 @@ function M.open_agent_interactive(initial_prompt)
             table.insert(opts, string.format('Join pane %d (%s)  %s', i, p.cmd, p.id))
         end
         table.insert(opts, 'New session')
-        table.insert(opts, 'Resume last')
         vim.ui.select(
             opts,
             { prompt = 'todo-ai: choose agent' },
             function(choice)
                 if not choice then return end
                 if choice == 'New session' then
-                    M._spawn_agent(initial_prompt, 'new')
-                elseif choice == 'Resume last' then
-                    M._spawn_agent(initial_prompt, 'resume')
+                    M._spawn_agent(initial_prompt, nil)
                 else
                     local idx = tonumber(choice:match('^Join pane (%d+)'))
                     if idx and panes[idx] then
@@ -388,6 +378,13 @@ function M.open_agent_interactive(initial_prompt)
             end
         )
     end
+end
+
+function M.open_agent_new(initial_prompt)
+    if not M._in_tmux() then
+        error('todo-ai requires tmux. Start Neovim inside a tmux session.')
+    end
+    M._spawn_agent(initial_prompt, 'new')
 end
 
 function M._send_keys(text)

@@ -9,6 +9,9 @@ M.defaults = {
   tag = 'AGENT',
   pane_width = 80,
 
+  -- "new" or "resume"; nil = harness default (pi → resume, claude_code → new)
+  session_mode = nil,
+
   -- Pi-specific
   pi_extra_args = {},
 

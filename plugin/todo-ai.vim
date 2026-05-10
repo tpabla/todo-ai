@@ -4,6 +4,7 @@ endif
 let g:loaded_todo_ai = 1
 
 command! TodoAI lua require('todo-ai').open_agent_interactive()
+command! TodoAINew lua require('todo-ai').open_agent_new()
 command! TodoAIFocus lua require('todo-ai').focus_agent()
 command! TodoAIScan lua require('todo-ai').scan()
 command! TodoAIInstall lua require('todo-ai').install()
