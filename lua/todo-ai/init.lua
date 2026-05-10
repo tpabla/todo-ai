@@ -96,6 +96,36 @@ function M._is_pane_alive()
     return true
 end
 
+function M._find_agent_panes()
+    if not M._in_tmux() then return {} end
+    local cwd = vim.fn.getcwd()
+    local raw = vim.fn.system("tmux list-panes -s -F '#{pane_id}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_pid}'")
+    if vim.v.shell_error ~= 0 then return {} end
+    local results = {}
+    for line in raw:gmatch('[^\n]+') do
+        local id, path, cmd, pid = line:match('^([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)$')
+        if id and path and path == cwd then
+            local base = cmd and vim.fn.fnamemodify(cmd, ':t') or ''
+            local agent_cmd = nil
+            if base == 'claude' then
+                agent_cmd = 'claude'
+            elseif base == 'pi' then
+                agent_cmd = 'pi'
+            elseif base == 'node' and pid then
+                -- pi is a node.js script; check full command line to confirm
+                local full = vim.trim(vim.fn.system('ps -p ' .. pid .. ' -o command= 2>/dev/null'))
+                if full:find('/pi%s') or full:match('/pi$') then
+                    agent_cmd = 'pi'
+                end
+            end
+            if agent_cmd then
+                table.insert(results, { id = id, path = path, cmd = agent_cmd })
+            end
+        end
+    end
+    return results
+end
+
 function M._plugin_root()
     local source = debug.getinfo(1, 'S').source:sub(2)
     return vim.fn.fnamemodify(source, ':h:h:h')
@@ -163,11 +193,15 @@ function M._check_install()
     end
 end
 
-function M._build_cmd(initial_prompt)
+function M._build_cmd(initial_prompt, session_mode)
     local harness = config.get('harness')
 
     if harness == config.HARNESS_PI then
-        local cmd = { 'pi', '-e', M._extension_path(), '--resume' }
+        local mode = session_mode or 'resume'
+        local cmd = { 'pi', '-e', M._extension_path() }
+        if mode == 'resume' then
+            table.insert(cmd, '--resume')
+        end
         for _, arg in ipairs(config.get('pi_extra_args') or {}) do
             table.insert(cmd, arg)
         end
@@ -180,6 +214,10 @@ function M._build_cmd(initial_prompt)
         -- hooks, /scan skill, workflow rules) in-place from the lazy.nvim
         -- clone, so no copy lands under ~/.claude/.
         local cmd = { 'claude', '--plugin-dir', M._plugin_root() }
+        local mode = session_mode or 'new'
+        if mode == 'resume' then
+            table.insert(cmd, '--continue')
+        end
         local model = config.get('claude_model')
         if model then
             table.insert(cmd, '--model')
@@ -208,32 +246,29 @@ function M._write_prompt(text)
     os.rename(staging, tmpfile)
 end
 
-function M.open_agent(initial_prompt)
-    if not M._in_tmux() then
-        error('todo-ai requires tmux. Start Neovim inside a tmux session.')
+function M._join_pane(pane_id, initial_prompt)
+    M.state.tmux_pane = pane_id
+    local dir = M._state_dir()
+    vim.fn.mkdir(dir, 'p')
+    vim.fn.writefile({ pane_id }, dir .. '/pane-id')
+    vim.fn.writefile({ vim.v.servername }, dir .. '/nvim-socket')
+    if initial_prompt then
+        local harness = config.get('harness')
+        if harness == config.HARNESS_PI then
+            M._write_prompt(initial_prompt)
+        elseif harness == config.HARNESS_CLAUDE_CODE then
+            M._send_keys(initial_prompt)
+        end
     end
+    vim.fn.system({ 'tmux', 'select-pane', '-t', pane_id })
+end
 
+function M._spawn_agent(initial_prompt, session_mode)
     local dir = M._state_dir()
     vim.fn.mkdir(dir, 'p')
     vim.fn.writefile({ vim.v.servername }, dir .. '/nvim-socket')
 
-    local harness = config.get('harness')
-
-    -- Reconnect if agent is already running for this CWD
-    if M._is_pane_alive() then
-        if initial_prompt then
-            if harness == config.HARNESS_PI then
-                M._write_prompt(initial_prompt)
-            elseif harness == config.HARNESS_CLAUDE_CODE then
-                M._send_keys(initial_prompt)
-            end
-        end
-        vim.fn.system({ 'tmux', 'select-pane', '-t', M.state.tmux_pane })
-        return
-    end
-
-    -- Spawn new agent
-    local cmd = M._build_cmd(initial_prompt)
+    local cmd = M._build_cmd(initial_prompt, session_mode)
     local socket = vim.v.servername
     local width = config.get('pane_width')
     local tag = config.get('tag')
@@ -261,8 +296,99 @@ function M.open_agent(initial_prompt)
     vim.fn.writefile({ result }, dir .. '/pane-id')
 end
 
+function M.open_agent(initial_prompt)
+    if not M._in_tmux() then
+        error('todo-ai requires tmux. Start Neovim inside a tmux session.')
+    end
+
+    local dir = M._state_dir()
+    vim.fn.mkdir(dir, 'p')
+    vim.fn.writefile({ vim.v.servername }, dir .. '/nvim-socket')
+
+    local harness = config.get('harness')
+
+    -- Reconnect if tracked agent is still alive (silent, no picker)
+    if M._is_pane_alive() then
+        if initial_prompt then
+            if harness == config.HARNESS_PI then
+                M._write_prompt(initial_prompt)
+            elseif harness == config.HARNESS_CLAUDE_CODE then
+                M._send_keys(initial_prompt)
+            end
+        end
+        vim.fn.system({ 'tmux', 'select-pane', '-t', M.state.tmux_pane })
+        return
+    end
+
+    -- No tracked pane alive: spawn with harness defaults (nil = Pi resumes, Claude Code starts new)
+    M._spawn_agent(initial_prompt, nil)
+end
+
 -- Backward-compatible alias
 M.open_pi = M.open_agent
+
+function M.open_agent_interactive(initial_prompt)
+    if not M._in_tmux() then
+        error('todo-ai requires tmux. Start Neovim inside a tmux session.')
+    end
+
+    local panes = M._find_agent_panes()
+
+    -- Always include the tracked pane if it's alive and not already in the discovery results.
+    -- This is the safety net for cases where process detection misses it (e.g. a node wrapper
+    -- that doesn't match the ps pattern) or the pane's CWD drifted.
+    if M._is_pane_alive() then
+        local tracked = M.state.tmux_pane
+        local already_found = false
+        for _, p in ipairs(panes) do
+            if p.id == tracked then already_found = true; break end
+        end
+        if not already_found then
+            local harness = config.get('harness')
+            local cmd_label = harness == config.HARNESS_PI and 'pi' or 'claude'
+            table.insert(panes, 1, { id = tracked, path = vim.fn.getcwd(), cmd = cmd_label })
+        end
+    end
+
+    if #panes == 0 then
+        vim.ui.select(
+            { 'New session', 'Resume last' },
+            { prompt = 'todo-ai: start how?' },
+            function(choice)
+                if not choice then return end
+                M._spawn_agent(initial_prompt, choice == 'Resume last' and 'resume' or 'new')
+            end
+        )
+
+    elseif #panes == 1 then
+        M._join_pane(panes[1].id, initial_prompt)
+
+    else
+        local opts = {}
+        for i, p in ipairs(panes) do
+            table.insert(opts, string.format('Join pane %d (%s)  %s', i, p.cmd, p.id))
+        end
+        table.insert(opts, 'New session')
+        table.insert(opts, 'Resume last')
+        vim.ui.select(
+            opts,
+            { prompt = 'todo-ai: choose agent' },
+            function(choice)
+                if not choice then return end
+                if choice == 'New session' then
+                    M._spawn_agent(initial_prompt, 'new')
+                elseif choice == 'Resume last' then
+                    M._spawn_agent(initial_prompt, 'resume')
+                else
+                    local idx = tonumber(choice:match('^Join pane (%d+)'))
+                    if idx and panes[idx] then
+                        M._join_pane(panes[idx].id, initial_prompt)
+                    end
+                end
+            end
+        )
+    end
+end
 
 function M._send_keys(text)
     -- Send literal text + Enter to the agent's tmux pane.
