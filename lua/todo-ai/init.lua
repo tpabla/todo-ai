@@ -99,28 +99,13 @@ end
 function M._find_agent_panes()
     if not M._in_tmux() then return {} end
     local cwd = vim.fn.getcwd()
-    local raw = vim.fn.system("tmux list-panes -s -F '#{pane_id}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_pid}'")
+    local raw = vim.fn.system("tmux list-panes -s -F '#{pane_id}\t#{pane_current_path}\t#{@todo-ai-agent}'")
     if vim.v.shell_error ~= 0 then return {} end
     local results = {}
     for line in raw:gmatch('[^\n]+') do
-        local id, path, cmd, pid = line:match('^([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)$')
-        if id and path and path == cwd then
-            local base = cmd and vim.fn.fnamemodify(cmd, ':t') or ''
-            local agent_cmd = nil
-            if base == 'claude' then
-                agent_cmd = 'claude'
-            elseif base == 'pi' then
-                agent_cmd = 'pi'
-            elseif base == 'node' and pid then
-                -- pi is a node.js script; check full command line to confirm
-                local full = vim.trim(vim.fn.system('ps -p ' .. pid .. ' -o command= 2>/dev/null'))
-                if full:find('/pi%s') or full:match('/pi$') then
-                    agent_cmd = 'pi'
-                end
-            end
-            if agent_cmd then
-                table.insert(results, { id = id, path = path, cmd = agent_cmd })
-            end
+        local id, path, agent = line:match('^([^\t]+)\t([^\t]+)\t([^\t]*)$')
+        if id and path and agent ~= '' and path == cwd then
+            table.insert(results, { id = id, path = path, cmd = agent })
         end
     end
     return results

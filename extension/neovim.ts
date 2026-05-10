@@ -38,15 +38,14 @@ export default function (pi: ExtensionAPI) {
     mkdirSync(stateDir, { recursive: true });
   } catch {}
 
-  // Write our tmux pane ID so Neovim can find us
-  if (process.env.TMUX) {
+  // Tag this pane for discovery by the Neovim plugin
+  if (process.env.TMUX && process.env.TMUX_PANE) {
+    const paneId = process.env.TMUX_PANE;
     try {
-      const paneId = execFileSync(
-        "tmux",
-        ["display-message", "-p", "#{pane_id}"],
-        { encoding: "utf-8", timeout: 3000 }
-      ).trim();
       writeFileSync(`${stateDir}/pane-id`, paneId);
+      execFileSync("tmux", ["set-option", "-p", "-t", paneId, "@todo-ai-agent", "pi"], {
+        timeout: 3000,
+      });
     } catch {}
   }
 

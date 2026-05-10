@@ -9,6 +9,11 @@ set -euo pipefail
 # Discard the JSON on stdin — we don't need it.
 cat > /dev/null
 
+# Tag this pane for discovery by the Neovim plugin (idempotent).
+if [ -n "${TMUX_PANE:-}" ]; then
+    tmux set-option -p -t "$TMUX_PANE" @todo-ai-agent claude 2>/dev/null || true
+fi
+
 cat <<'EOF'
 <neovim-workflow>
 You are connected to a running Neovim editor via the neovim_* MCP tools
