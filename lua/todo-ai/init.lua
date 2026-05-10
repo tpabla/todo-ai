@@ -126,32 +126,58 @@ function M._mcp_deps_installed()
     return vim.fn.isdirectory(M._plugin_root() .. '/mcp-server/node_modules') == 1
 end
 
+function M._pi_extension_installed()
+    -- pi install stores a relative path in settings.json so we can't match on
+    -- the full absolute path — match on the unique suffix instead.
+    local settings = M._read_file(vim.fn.expand('~/.pi/agent/settings.json'))
+    return settings ~= nil and settings:find('todo%-ai/extension/neovim%.ts', 1) ~= nil
+end
+
 function M.install()
+    local harness = config.get('harness')
     local root = M._plugin_root()
     local notify = function(msg, level)
         vim.notify('[todo-ai] ' .. msg, level or vim.log.levels.INFO)
     end
 
-    -- The only install step is `npm install` for the MCP server. The Claude
-    -- Code plugin itself is loaded in-place via `claude --plugin-dir <root>`
-    -- (baked into the launch command), so nothing is copied to ~/.claude/.
-    if M._mcp_deps_installed() then
-        notify('mcp-server deps already installed')
+    if harness == config.HARNESS_PI then
+        if M._pi_extension_installed() then
+            notify('pi extension already installed')
+            return true
+        end
+        if vim.fn.executable('pi') ~= 1 then
+            notify('pi not found on PATH', vim.log.levels.ERROR)
+            return false
+        end
+        notify('installing pi extension globally...')
+        local out = vim.fn.system({ 'pi', 'install', M._extension_path() })
+        if vim.v.shell_error ~= 0 then
+            notify('pi install failed:\n' .. out, vim.log.levels.ERROR)
+            return false
+        end
+        notify('pi extension installed — will auto-load for all pi sessions')
+        return true
+
+    elseif harness == config.HARNESS_CLAUDE_CODE then
+        -- Claude Code plugin loads in-place via --plugin-dir; only npm install needed.
+        if M._mcp_deps_installed() then
+            notify('mcp-server deps already installed')
+            return true
+        end
+        if vim.fn.executable('npm') ~= 1 then
+            notify('npm not found on PATH — cannot install mcp-server deps', vim.log.levels.ERROR)
+            return false
+        end
+        notify('installing mcp-server deps...')
+        local out = vim.fn.system({ 'npm', '--prefix', root .. '/mcp-server', 'install', '--silent' })
+        if vim.v.shell_error ~= 0 then
+            notify('npm install failed:\n' .. out, vim.log.levels.ERROR)
+            return false
+        end
+        notify('mcp-server deps installed')
+        M._print_permissions_hint()
         return true
     end
-    if vim.fn.executable('npm') ~= 1 then
-        notify('npm not found on PATH — cannot install mcp-server deps', vim.log.levels.ERROR)
-        return false
-    end
-    notify('installing mcp-server deps (npm install)...')
-    local out = vim.fn.system({ 'npm', '--prefix', root .. '/mcp-server', 'install', '--silent' })
-    if vim.v.shell_error ~= 0 then
-        notify('npm install failed:\n' .. out, vim.log.levels.ERROR)
-        return false
-    end
-    notify('mcp-server deps installed')
-    M._print_permissions_hint()
-    return true
 end
 
 function M._print_permissions_hint()
@@ -168,13 +194,21 @@ function M._print_permissions_hint()
 end
 
 function M._check_install()
-    -- Only relevant for the claude_code harness.
-    if config.get('harness') ~= config.HARNESS_CLAUDE_CODE then return end
-    if not M._mcp_deps_installed() then
-        vim.notify(
-            '[todo-ai] mcp-server deps not installed. Run :TodoAIInstall.',
-            vim.log.levels.WARN
-        )
+    local harness = config.get('harness')
+    if harness == config.HARNESS_PI then
+        if not M._pi_extension_installed() then
+            vim.notify(
+                '[todo-ai] pi extension not installed globally. Run :TodoAIInstall.',
+                vim.log.levels.WARN
+            )
+        end
+    elseif harness == config.HARNESS_CLAUDE_CODE then
+        if not M._mcp_deps_installed() then
+            vim.notify(
+                '[todo-ai] mcp-server deps not installed. Run :TodoAIInstall.',
+                vim.log.levels.WARN
+            )
+        end
     end
 end
 
