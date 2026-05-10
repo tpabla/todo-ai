@@ -43,9 +43,8 @@ export default function (pi: ExtensionAPI) {
     const paneId = process.env.TMUX_PANE;
     try {
       writeFileSync(`${stateDir}/pane-id`, paneId);
-      execFileSync("tmux", ["set-option", "-p", "-t", paneId, "@todo-ai-agent", "pi"], {
-        timeout: 3000,
-      });
+      execFileSync("tmux", ["set-option", "-p", "-t", paneId, "@todo-ai-agent", "pi"], { timeout: 3000 });
+      execFileSync("tmux", ["set-option", "-p", "-t", paneId, "@todo-ai-dir", stateDir], { timeout: 3000 });
     } catch {}
   }
 

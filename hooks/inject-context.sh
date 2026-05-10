@@ -12,6 +12,7 @@ cat > /dev/null
 # Tag this pane for discovery by the Neovim plugin (idempotent).
 if [ -n "${TMUX_PANE:-}" ]; then
     tmux set-option -p -t "$TMUX_PANE" @todo-ai-agent claude 2>/dev/null || true
+    tmux set-option -p -t "$TMUX_PANE" @todo-ai-dir "$TODO_AI_STATE_DIR" 2>/dev/null || true
 fi
 
 cat <<'EOF'
