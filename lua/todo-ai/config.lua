@@ -12,6 +12,10 @@ M.defaults = {
   -- "new" or "resume"; nil = harness default (pi → resume, claude_code → new)
   session_mode = nil,
 
+  -- Optional label for this editor, so an agent can be addressed by name
+  -- instead of a tmux pane id: :TodoAIConnect api
+  session_name = nil,
+
   -- Pi-specific
   pi_extra_args = {},
 

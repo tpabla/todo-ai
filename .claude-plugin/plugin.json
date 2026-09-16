@@ -6,7 +6,6 @@
     "name": "todo-ai"
   },
   "license": "MIT",
-  "hooks": "./hooks/hooks.json",
   "mcpServers": "./.mcp.json",
   "skills": "./skills"
 }

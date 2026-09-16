@@ -2,13 +2,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import {
-  deriveStateDir,
-  getNvimSocket,
-  nvimExec,
-  nvimEval,
-  findLineForSearch,
-} from "./nvim.js";
+import { getNvimSocket, nvimExec, nvimEval, findLineForSearch } from "./nvim.js";
+import { toAbsolute } from "../shared/pairing.js";
 
 const server = new McpServer({
   name: "todo-ai-neovim",
@@ -19,7 +14,7 @@ server.tool(
   "neovim_open_file",
   "Open a file in the connected Neovim editor at a specific line or search pattern. Use this when referencing specific code so the user can see it in their editor.",
   {
-    path: z.string().describe("File path to open (absolute or relative to cwd)"),
+    path: z.string().describe("File path to open (absolute, or relative to this agent's cwd)"),
     line: z.number().int().positive().optional().describe("Line number to jump to"),
     search: z.string().optional().describe("Pattern to search for (overrides line if found — more reliable than line numbers)"),
   },
@@ -29,16 +24,20 @@ server.tool(
       return { content: [{ type: "text", text: "Neovim not connected" }] };
     }
 
+    // Resolve against this agent's cwd before sending: the editor may sit in a
+    // different directory, so it refuses relative paths outright.
+    const absPath = toAbsolute(path);
+
     let targetLine = line || 1;
     if (search) {
-      const found = findLineForSearch(path, search);
+      const found = findLineForSearch(absPath, search);
       if (found) targetLine = found;
     }
 
     try {
-      const safePath = path.replace(/'/g, "\\'");
+      const safePath = absPath.replace(/'/g, "\\'");
       nvimExec(socket, `require('todo-ai').remote_open('${safePath}', ${targetLine})`);
-      return { content: [{ type: "text", text: `Opened ${path} at line ${targetLine}` }] };
+      return { content: [{ type: "text", text: `Opened ${absPath} at line ${targetLine}` }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error: ${e.message}` }] };
     }

@@ -1,14 +1,10 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import {
-  readFileSync,
-  writeFileSync,
-  unlinkSync,
-  existsSync,
-  mkdirSync,
-} from "node:fs";
+import { readFileSync, unlinkSync, existsSync, mkdirSync } from "node:fs";
+// Pairing/path logic is shared with the Claude Code MCP server so the two
+// harness integrations cannot drift apart.
+import { resolveEditor, toAbsolute, tagPane } from "../shared/pairing.js";
 
 interface NeovimContext {
   current_file?: string;
@@ -21,42 +17,24 @@ interface NeovimContext {
   }>;
 }
 
-// Derive state dir from CWD (same hash as Lua's vim.fn.sha256)
-function deriveStateDir(): string {
-  const cwd = process.cwd();
-  const hash = createHash("sha256").update(cwd).digest("hex").slice(0, 16);
-  return `/tmp/todo-ai-${hash}`;
-}
-
 export default function (pi: ExtensionAPI) {
-  // Auto-discover state dir: explicit env > derived from CWD
-  const stateDir = process.env.TODO_AI_STATE_DIR || deriveStateDir();
   const tag = process.env.TODO_AI_TAG || "AGENT";
 
-  // Ensure state dir exists
-  try {
-    mkdirSync(stateDir, { recursive: true });
-  } catch {}
+  // Tag this pane so the Neovim plugin can offer it in the connect picker.
+  tagPane({ agent: "pi", name: process.env.TODO_AI_NAME });
 
-  // Tag this pane for discovery by the Neovim plugin
-  if (process.env.TMUX && process.env.TMUX_PANE) {
-    const paneId = process.env.TMUX_PANE;
+  // Pair with an editor by ancestry: it may be in a subdirectory of this
+  // agent's cwd (a worktree) rather than the same directory.
+  let editor = resolveEditor();
+  let nvim: string | null = process.env.NVIM || (editor ? editor.socket : null);
+
+  // Prompts are dropped in the editor's own session dir.
+  let sessionDir: string | null =
+    process.env.TODO_AI_SESSION_DIR || (editor ? editor.dir : null);
+  if (sessionDir) {
     try {
-      writeFileSync(`${stateDir}/pane-id`, paneId);
-      execFileSync("tmux", ["set-option", "-p", "-t", paneId, "@todo-ai-agent", "pi"], { timeout: 3000 });
-      execFileSync("tmux", ["set-option", "-p", "-t", paneId, "@todo-ai-dir", stateDir], { timeout: 3000 });
+      mkdirSync(sessionDir, { recursive: true });
     } catch {}
-  }
-
-  // Mutable — updated when Neovim (re)connects or disconnects
-  let nvim: string | null = process.env.NVIM || null;
-
-  const socketFile = `${stateDir}/nvim-socket`;
-  const promptFile = `${stateDir}/prompt.md`;
-
-  // Try state dir if no $NVIM env
-  if (!nvim && existsSync(socketFile)) {
-    nvim = readFileSync(socketFile, "utf-8").trim() || null;
   }
 
   function nvimExec(luaCode: string): void {
@@ -95,24 +73,20 @@ export default function (pi: ExtensionAPI) {
     };
   } | null = null;
 
-  // Poll for socket changes (reconnection/disconnect) and prompt files
+  // Poll for editor changes (reconnection/disconnect) and prompt files
   const poll = setInterval(() => {
-    // 1. Socket — detect (re)connect / disconnect
-    if (existsSync(socketFile)) {
-      try {
-        const socket = readFileSync(socketFile, "utf-8").trim();
-        if (socket && socket !== nvim) {
-          nvim = socket;
-          sessionCtx?.ui.setStatus("nvim", "🟢 nvim");
-        }
-      } catch {}
-    } else if (nvim) {
-      nvim = null;
-      sessionCtx?.ui.setStatus("nvim", "🔴 nvim");
+    // 1. Re-resolve the editor — detect (re)connect / disconnect
+    editor = resolveEditor();
+    const socket = editor ? editor.socket : null;
+    if (socket !== nvim) {
+      nvim = socket;
+      sessionDir = editor ? editor.dir : sessionDir;
+      sessionCtx?.ui.setStatus("nvim", nvim ? "🟢 nvim" : "🔴 nvim");
     }
 
     // 2. Prompt file — process prompts sent from Neovim
-    if (existsSync(promptFile)) {
+    const promptFile = sessionDir ? `${sessionDir}/prompt.md` : null;
+    if (promptFile && existsSync(promptFile)) {
       try {
         const text = readFileSync(promptFile, "utf-8").trim();
         unlinkSync(promptFile);
@@ -190,7 +164,7 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({
       action: Type.String({ description: "'open_file' or 'diff_review'" }),
       path: Type.Optional(
-        Type.String({ description: "File path (for open_file)" })
+        Type.String({ description: "File path, absolute or relative to this agent's cwd (for open_file)" })
       ),
       line: Type.Optional(
         Type.Number({ description: "Line number (for open_file)" })
@@ -207,7 +181,10 @@ export default function (pi: ExtensionAPI) {
       try {
         if (params.action === "open_file") {
           if (!params.path) return ok("Error: path required");
-          const safePath = params.path.replace(/'/g, "\\'");
+          // The editor may sit in a different directory, so it refuses
+          // relative paths -- resolve against this agent's cwd first.
+          const absPath = toAbsolute(params.path)!;
+          const safePath = absPath.replace(/'/g, "\\'");
           let line = params.line || 1;
 
           // Search for pattern to find accurate line number
@@ -215,7 +192,7 @@ export default function (pi: ExtensionAPI) {
             try {
               const out = execFileSync(
                 "grep",
-                ["-n", "-m", "1", params.search, params.path],
+                ["-n", "-m", "1", "-F", params.search, absPath],
                 { encoding: "utf-8", timeout: 3000 }
               );
               const match = out.match(/^(\d+):/);
@@ -226,7 +203,7 @@ export default function (pi: ExtensionAPI) {
           nvimExec(
             `require('todo-ai').remote_open('${safePath}', ${line})`
           );
-          return ok(`Opened ${params.path} at line ${line}`);
+          return ok(`Opened ${absPath} at line ${line}`);
         }
 
         if (params.action === "diff_review") {
@@ -264,8 +241,15 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event: any, ctx) => {
     sessionCtx = ctx;
+    // Re-tag with the session id now that it is known, so the editor's
+    // picker can show which conversation a pane holds.
+    tagPane({
+      agent: "pi",
+      sessionId: event?.sessionId ?? event?.session?.id,
+      name: process.env.TODO_AI_NAME,
+    });
     ctx.ui.setStatus("nvim", nvim ? "🟢 nvim" : "🔴 nvim");
   });
 }

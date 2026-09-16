@@ -3,12 +3,15 @@ if exists('g:loaded_todo_ai')
 endif
 let g:loaded_todo_ai = 1
 
-command! TodoAI lua require('todo-ai').open_agent_interactive()
-command! TodoAINew lua require('todo-ai').open_agent_new()
-command! TodoAIFocus lua require('todo-ai').focus_agent()
-command! TodoAIScan lua require('todo-ai').scan()
-command! TodoAIInstall lua require('todo-ai').install()
-command! -range TodoAIVisual lua require('todo-ai.visual').process()
+command!          TodoAI           lua require('todo-ai').open_agent_interactive()
+command!          TodoAINew        lua require('todo-ai').open_agent_new()
+command! -nargs=? TodoAIConnect    lua require('todo-ai').connect(<q-args>)
+command!          TodoAIDisconnect lua require('todo-ai').disconnect()
+command! -nargs=1 TodoAIResume     lua require('todo-ai').resume_session(<q-args>)
+command!          TodoAIFocus      lua require('todo-ai').focus_agent()
+command!          TodoAIScan       lua require('todo-ai').scan()
+command!          TodoAIInstall    lua require('todo-ai').install()
+command! -range   TodoAIVisual     lua require('todo-ai.visual').process()
 
 nnoremap <silent> <leader>tc :TodoAI<CR>
 nnoremap <silent> <leader>tf :TodoAIFocus<CR>

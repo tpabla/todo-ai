@@ -27,7 +27,7 @@ Neovim + an AI coding agent via tmux. The agent runs in its own tmux pane with f
 └──────────────────────────────────────────────────────┘
 ```
 
-`:TodoAI` opens pi in a tmux split. Pi and Neovim are linked by CWD — close Neovim, reopen it, and pi reconnects automatically (🟢). Close Neovim for good and pi shows disconnected (🔴). Multiple Neovim instances in different projects each get their own pi.
+`:TodoAI` opens the agent in a tmux split. Agent and Neovim are linked by **path ancestry**, not by an identical working directory — an agent at a project root pairs with a Neovim running inside a worktree beneath it. When agent panes already exist, `:TodoAI` asks which one to connect to rather than guessing; with none, it spawns one. Close Neovim and the agent shows disconnected (🔴); reopen and it goes 🟢. Multiple Neovim instances in different projects each get their own agent.
 
 ## Requirements
 
@@ -53,10 +53,14 @@ See **[INSTALL.md](INSTALL.md)** for detailed setup.
 
 | Key | Command | Description |
 |-----|---------|-------------|
-| `<leader>tc` | `:TodoAI` | Open the agent in a tmux pane (or reuse existing) |
-| `<leader>tf` | `:TodoAIFocus` | Switch tmux focus to the agent's pane |
+| `<leader>tc` | `:TodoAI` | Connect to an agent pane (asks when any exist, spawns when none do) |
+| `<leader>tf` | `:TodoAIFocus` | Switch tmux focus to the connected agent's pane |
 | `<leader>ts` | `:TodoAIScan` | Find `AGENT:` comments, send them to the agent |
 | `<leader>ti` | `:TodoAIVisual` | Send visual selection to the agent |
+|              | `:TodoAIConnect [name\|%pane]` | Connect to a specific agent; no argument shows the picker |
+|              | `:TodoAIDisconnect` | Detach from the current agent pane |
+|              | `:TodoAINew` | Always spawn a new agent pane |
+|              | `:TodoAIResume <session-id>` | Spawn an agent resuming a specific past session |
 |              | `:TodoAIInstall` | Install the Claude Code plugin (MCP deps + register) |
 
 ### Workflow
@@ -88,11 +92,39 @@ def process(data):
 
 ### Sessions & reconnection
 
-Pi manages sessions natively. `:TodoAI` always passes `--resume` so you can pick up where you left off or start fresh.
+Pi manages sessions natively. `:TodoAI` passes `--resume` so you can pick up where you left off or start fresh, and `:TodoAIResume <session-id>` targets one specific past session (`--session` for pi, `--resume` for Claude Code).
 
-If pi is already running for your project (same CWD), `:TodoAI` reconnects to it instead of spawning a new instance. Close Neovim → pi shows 🔴. Reopen Neovim → pi goes 🟢 automatically.
+If agent panes are already running, `:TodoAI` lists them and asks which to connect to — it never picks silently, so you always know which session you attached to. Candidates are ranked: exact directory match, then the nearest agent *above* you (the project-root-plus-worktrees case), then one below, then unrelated panes last. Nothing is hidden.
 
-Pi started independently (not through `:TodoAI`) also works — the extension auto-discovers Neovim's socket via CWD hash. Just run pi with the extension in the same directory as Neovim.
+### Picker navigation
+
+The picker is `vim.ui.select`, so its keys come from whichever picker plugin you
+have. With **mini.pick** (what `require('mini.pick').setup()` installs as
+`vim.ui.select`):
+
+| Key | Action |
+|---|---|
+| type any text | fuzzy-filter the candidates |
+| `<C-n>` / `<C-p>` | next / previous match |
+| `<CR>` | connect to the highlighted pane |
+| `<Esc>` | cancel |
+
+`/` and `hjkl` are not available in a prompt-driven picker — printable keys go
+into the filter instead of moving the cursor. Remap movement via
+`MiniPick.config.mappings` if `<C-n>`/`<C-p>` is not to your taste. With no
+picker plugin installed you get Neovim's built-in numbered prompt.
+
+Each candidate line shows the agent's own session name, taken from the tmux
+pane title, so two agents in the same directory are distinguishable:
+
+```
+%59  claude  roku-migration-impl                ~/worktrees/projects/roku-migration  (unrelated)
+%71  claude  roku-migration-repository-pattern  ~/worktrees/projects/roku-migration  (unrelated)
+```
+
+To skip the picker, name the target: `:TodoAIConnect api` (matches `@todo-ai-name`), `:TodoAIConnect %7` (a tmux pane id), or a session id prefix. Give an editor a name with `session_name` in `setup()`.
+
+An agent started independently (not through `:TodoAI`) also works. It is discovered by its pane process even before it has tagged itself, and it finds Neovim by ancestry — so it does **not** need to be in the same directory as Neovim.
 
 ## Configuration
 
@@ -154,7 +186,7 @@ The [pi extension](extension/neovim.ts) (~280 lines of TypeScript):
 
 | Hook | What it does |
 |------|-------------|
-| Socket polling | Detects Neovim connect/disconnect via state dir. 🟢 when connected, 🔴 when not. |
+| Editor polling | Re-resolves the paired editor from the session registry. 🟢 when connected, 🔴 when not. |
 | `before_agent_start` | Queries editor state (file, cursor, buffers, diagnostics). Injects workflow rules. |
 | `neovim` tool | Opens files at specific lines and triggers `:DiffviewOpen`. |
 | `tool_execution_end` | Calls `:checktime` after edits so buffers reload. |

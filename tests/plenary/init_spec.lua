@@ -103,17 +103,16 @@ describe("init", function()
     assert.is_table(ctx.open_files)
   end)
 
-  it("reports no pane alive when no state", function()
+  it("reports no pane alive when nothing is attached", function()
     init.state.tmux_pane = nil
-    local pane_file = init._state_dir() .. '/pane-id'
-    os.remove(pane_file)
+    init.state.attached = nil
     assert.is_false(init._is_pane_alive())
   end)
 
-  it("generates CWD-based state dir", function()
-    local dir = init._state_dir()
-    assert.is_true(dir:match('^/tmp/todo%-ai%-') ~= nil)
-    assert.equals(dir, init._state_dir())
+  it("publishes into a pid-keyed session dir", function()
+    local dir = init._session_dir()
+    assert.is_true(dir:match('/' .. vim.fn.getpid() .. '$') ~= nil)
+    assert.equals(dir, init._session_dir())
   end)
 
   it("reads files correctly", function()
@@ -134,8 +133,9 @@ describe("init", function()
       assert.is_true(vim.fn.isdirectory(root .. '/lua/todo-ai') == 1)
     end)
 
-    it("_mcp_deps_installed returns a boolean", function()
-      local v = init._mcp_deps_installed()
+    it("harness reports install state as a boolean", function()
+      require('todo-ai.config').setup({})
+      local v = require('todo-ai.harness').current().installed()
       assert.is_true(v == true or v == false)
     end)
 

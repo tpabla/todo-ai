@@ -1,20 +1,12 @@
 // Helpers for talking to a running Neovim instance via --remote-expr.
-// Pulled out of server.js so they can be unit-tested in isolation.
-import { createHash } from "node:crypto";
+// Pairing/path logic lives in ../shared/pairing.js so the pi extension and
+// this server cannot drift apart.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-
-// Derive state dir from CWD — must match Lua's vim.fn.sha256(cwd):sub(1, 16)
-export function deriveStateDir(cwd = process.cwd()) {
-  const hash = createHash("sha256").update(cwd).digest("hex").slice(0, 16);
-  return `/tmp/todo-ai-${hash}`;
-}
+import { resolveEditor } from "../shared/pairing.js";
 
 export function getNvimSocket() {
-  const socketFile = `${deriveStateDir()}/nvim-socket`;
-  if (!existsSync(socketFile)) return null;
-  const socket = readFileSync(socketFile, "utf-8").trim();
-  return socket || null;
+  const editor = resolveEditor();
+  return editor ? editor.socket : null;
 }
 
 export function nvimExec(socket, luaCode) {

@@ -4,16 +4,18 @@
 #
 # Claude Code reads stdout from this hook and injects it as additional
 # context for the upcoming turn.
-set -euo pipefail
+set -uo pipefail
 
-# Discard the JSON on stdin — we don't need it.
-cat > /dev/null
+# The payload carries session_id, which tags the pane with the conversation it
+# holds. Parsed with grep so the hook has no jq dependency.
+payload=$(cat)
+session_id=$(printf '%s' "$payload" \
+    | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
 
-# Tag this pane for discovery by the Neovim plugin (idempotent).
-if [ -n "${TMUX_PANE:-}" ]; then
-    tmux set-option -p -t "$TMUX_PANE" @todo-ai-agent claude 2>/dev/null || true
-    tmux set-option -p -t "$TMUX_PANE" @todo-ai-dir "$TODO_AI_STATE_DIR" 2>/dev/null || true
-fi
+# Tag this pane for discovery by the Neovim plugin (idempotent). Uses $PWD, not
+# a state-dir hash, so an agent above the editor's directory still pairs.
+"${CLAUDE_PLUGIN_ROOT:-$(dirname "$0")/..}/shared/tag-pane.sh" claude "$session_id" || true
 
 cat <<'EOF'
 <neovim-workflow>
