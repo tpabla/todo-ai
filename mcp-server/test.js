@@ -57,6 +57,33 @@ test("findLineForSearch returns null on missing file", () => {
   assert.equal(findLineForSearch("/nonexistent/file.txt", "x"), null);
 });
 
+// Registry sandbox: a temp registry dir with TODO_AI_SOCKET / TMUX_PANE under
+// test control, so a test run inside a real tmux pane cannot skew the result.
+function withRegistry(env, fn) {
+  const saved = {};
+  for (const key of ["TODO_AI_SOCKET", "TMUX_PANE"]) {
+    saved[key] = process.env[key];
+    if (env[key] === undefined) delete process.env[key];
+    else process.env[key] = env[key];
+  }
+  const dir = mkdtempSync(join(tmpdir(), "reg-"));
+  try {
+    return fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+function writeEditor(dir, id, entry) {
+  mkdirSync(join(dir, id), { recursive: true });
+  writeFileSync(join(dir, id, "editor.json"),
+    JSON.stringify({ pid: process.pid, ...entry }));
+}
+
 console.log("\npairing");
 
 test("toAbsolute resolves against the agent cwd, not the editor cwd", () => {
@@ -155,6 +182,55 @@ test("resolveEditor picks the nearest related editor", () => {
     rmSync(dir, { recursive: true, force: true });
     if (prev !== undefined) process.env.TODO_AI_SOCKET = prev;
   }
+});
+
+test("resolveEditor prefers the editor connected to this pane over a nearer one", () => {
+  withRegistry({ TMUX_PANE: "%7" }, (dir) => {
+    writeEditor(dir, "100", { socket: "/tmp/near.sock", cwd: "/proj/thing/repo-b" });
+    writeEditor(dir, "200", { socket: "/tmp/joined.sock", cwd: "/proj/thing", pane: "%7" });
+    assert.equal(resolveEditor("/proj/thing/repo-b", dir).socket, "/tmp/joined.sock");
+  });
+});
+
+test("resolveEditor honours a pane connection from an unrelated directory", () => {
+  // The whole point of an explicit connect: the user picked this editor by
+  // hand, so ancestry -- which would drop it as UNRELATED -- does not apply.
+  withRegistry({ TMUX_PANE: "%7" }, (dir) => {
+    writeEditor(dir, "100", { socket: "/tmp/joined.sock", cwd: "/somewhere/else", pane: "%7" });
+    assert.equal(resolveEditor("/proj/thing", dir).socket, "/tmp/joined.sock");
+  });
+});
+
+test("resolveEditor prefers a TODO_AI_SOCKET pin over a pane connection", () => {
+  withRegistry({ TODO_AI_SOCKET: "/tmp/pinned.sock", TMUX_PANE: "%7" }, (dir) => {
+    writeEditor(dir, "100", { socket: "/tmp/joined.sock", cwd: "/proj/thing", pane: "%7" });
+    assert.equal(resolveEditor("/proj/thing", dir).socket, "/tmp/pinned.sock");
+  });
+});
+
+test("resolveEditor falls back to ancestry when no editor claims this pane", () => {
+  withRegistry({ TMUX_PANE: "%7" }, (dir) => {
+    writeEditor(dir, "100", { socket: "/tmp/near.sock", cwd: "/proj/thing" });
+    writeEditor(dir, "200", { socket: "/tmp/other.sock", cwd: "/proj/thing", pane: "%9" });
+    assert.equal(resolveEditor("/proj/thing", dir).socket, "/tmp/near.sock");
+  });
+});
+
+test("resolveEditor ignores pane connections when not running under tmux", () => {
+  withRegistry({}, (dir) => {
+    writeEditor(dir, "100", { socket: "/tmp/joined.sock", cwd: "/somewhere/else", pane: "%7" });
+    writeEditor(dir, "200", { socket: "/tmp/near.sock", cwd: "/proj/thing" });
+    assert.equal(resolveEditor("/proj/thing", dir).socket, "/tmp/near.sock");
+  });
+});
+
+test("resolveEditor skips a dead editor holding this pane", () => {
+  withRegistry({ TMUX_PANE: "%7" }, (dir) => {
+    // pid 1 is alive but not ours; use a pid that cannot exist instead.
+    writeEditor(dir, "100", { socket: "/tmp/dead.sock", cwd: "/proj/thing", pane: "%7", pid: 2 ** 31 - 1 });
+    writeEditor(dir, "200", { socket: "/tmp/live.sock", cwd: "/proj/thing" });
+    assert.equal(resolveEditor("/proj/thing", dir).socket, "/tmp/live.sock");
+  });
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

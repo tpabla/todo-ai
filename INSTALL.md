@@ -86,6 +86,35 @@ Add to your `init.lua`:
 require("todo-ai").setup()
 ```
 
+## Claude Code plugin
+
+The Neovim plugin above is only half the bridge. The other half is a Claude Code
+plugin -- the `neovim_*` MCP tools, the context hook, and `/scan` -- which is what
+lets the agent open files in your editor.
+
+Agents launched by `:TodoAI` get it automatically via `--plugin-dir`. Agents you
+start yourself in a tmux pane do **not**, and can only receive prompts, never
+answer by driving Neovim. Install it once so every session has it:
+
+```bash
+claude plugin marketplace add /path/to/todo-ai
+claude plugin install todo-ai-nvim@todo-ai
+```
+
+The marketplace points at the checkout itself, so edits to this repo take effect
+in the next Claude Code session -- there is no copy to keep in sync.
+
+To verify, start a fresh `claude` in any tmux pane and check that
+`neovim_get_context` is listed. In the `:TodoAI` picker, a pane marked
+`(no editor bridge)` is an agent without this plugin loaded.
+
+Optionally skip the permission prompts for these tools by adding to
+`~/.claude/settings.json`:
+
+```json
+{ "permissions": { "allow": ["mcp__plugin_todo-ai-nvim_neovim__*"] } }
+```
+
 ## Configuration
 
 Provider, model, and thinking level are configured through pi directly (see [pi docs](https://github.com/mariozechner/pi-coding-agent)). The settings below are todo-ai-specific:
@@ -113,7 +142,7 @@ require("todo-ai").setup({
 
 | Default | Command | Description |
 |---------|---------|-------------|
-| `<leader>tc` | `:TodoAI` | Open pi in a tmux pane (reuses existing) |
+| `<leader>tc` | `:TodoAIConnect` | Connect to an agent pane (reuses the current connection) |
 | `<leader>tf` | `:TodoAIFocus` | Switch tmux focus to pi's pane |
 | `<leader>ts` | `:TodoAIScan` | Find `AGENT:` comments, send to pi |
 | `<leader>ti` | `:TodoAIVisual` | Send visual selection to pi |

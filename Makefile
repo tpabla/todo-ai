@@ -4,7 +4,7 @@ test: test-lua test-mcp test-hooks test-plugin ## Run all tests
 
 test-plugin: ## Validate plugin manifest JSON files
 	@python3 -c "import json; \
-		[json.load(open(f)) for f in ['.claude-plugin/plugin.json', '.mcp.json', 'hooks/hooks.json', 'mcp-server/package.json']]; \
+		[json.load(open(f)) for f in ['.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', '.mcp.json', 'hooks/hooks.json', 'mcp-server/package.json']]; \
 		print('  ok  plugin manifest JSON files are valid')"
 
 test-hooks: ## Run hook script tests

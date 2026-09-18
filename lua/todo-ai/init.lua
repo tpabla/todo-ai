@@ -30,6 +30,10 @@ function M._publish()
         cwd = paths.normalize(vim.fn.getcwd()),
         pid = vim.fn.getpid(),
         name = config.get('session_name'),
+        -- The pane the user explicitly connected to. Without it the agent can
+        -- only guess by cwd ancestry, and picks the wrong editor whenever
+        -- another nvim sits nearer -- or above -- it in the tree.
+        pane = M.state.attached,
     })
 end
 
@@ -97,25 +101,31 @@ function M._clear_pane()
     M.state.attached = nil
     os.remove(M._session_dir() .. '/prompt.md')
     os.remove(M._session_dir() .. '/prompt.md.tmp')
+    M._publish()
 end
 
 -- The attached pane id, but only while it is still a live agent pane. A pane
 -- can close, or its agent can exit leaving a shell behind, between choosing it
 -- and using it -- and send_keys into a shell would type the prompt at a prompt.
 -- Derived from current state on every call rather than remembered.
-function M.attached_pane(overrides)
+function M._attached_pane_info(overrides)
     local pane_id = M.state.attached
     if not pane_id then return nil end
 
     for _, pane in ipairs(M._deps(overrides).candidates()) do
         if pane.id == pane_id then
             M.state.tmux_pane = pane_id
-            return pane_id
+            return pane
         end
     end
 
     M._clear_pane()
     return nil
+end
+
+function M.attached_pane(overrides)
+    local pane = M._attached_pane_info(overrides)
+    return pane and pane.id or nil
 end
 
 function M._is_pane_alive()
@@ -231,6 +241,7 @@ function M._spawn_agent(initial_prompt, session_mode, session_id)
 
     M.state.tmux_pane = result
     M.state.attached = result
+    M._publish()
     return result
 end
 
@@ -261,7 +272,10 @@ function M._describe_pane(pane)
     if pane.rank and pane.rank ~= 'exact' then
         table.insert(bits, '(' .. pane.rank .. ')')
     end
-    if not pane.tagged then table.insert(bits, '(untagged)') end
+    -- An untagged pane is an agent with no todo-ai integration loaded: the
+    -- tag is written by the plugin's own hook. Prompts will reach it, but it
+    -- has no neovim_* tools to answer with.
+    if not pane.tagged then table.insert(bits, '(no editor bridge)') end
 
     return string.format('%s  %s', pane.id, table.concat(bits, '  '))
 end
@@ -330,6 +344,13 @@ function M.connect(target, overrides)
     local deps = M._deps(overrides)
 
     if not target or target == '' then
+        -- Re-running :TodoAIConnect while attached should confirm the link,
+        -- not make you pick the same pane again. Use :TodoAI to always choose.
+        local pane = M._attached_pane_info(overrides)
+        if pane then
+            notify('already connected to ' .. M._describe_pane(pane))
+            return pane.id
+        end
         return M.open_agent_interactive(nil, overrides)
     end
 
@@ -346,8 +367,7 @@ end
 
 function M.disconnect()
     local was = M.state.attached
-    M.state.tmux_pane = nil
-    M.state.attached = nil
+    M._clear_pane()
     notify(was and ('detached from ' .. was) or 'not attached')
 end
 

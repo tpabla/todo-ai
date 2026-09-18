@@ -103,8 +103,13 @@ function rank(agentCwd, editorCwd) {
 }
 
 // The editor to talk to: an explicit TODO_AI_SOCKET pin always wins, then the
-// nearest editor related to cwd by ancestry, else null.
-export function resolveEditor(cwd = process.cwd(), registryDir = REGISTRY_DIR) {
+// editor that connected itself to this pane, then the nearest editor related to
+// cwd by ancestry, else null.
+export function resolveEditor(
+  cwd = process.cwd(),
+  registryDir = REGISTRY_DIR,
+  pane = process.env.TMUX_PANE
+) {
   if (process.env.TODO_AI_SOCKET) {
     return {
       socket: process.env.TODO_AI_SOCKET,
@@ -113,7 +118,17 @@ export function resolveEditor(cwd = process.cwd(), registryDir = REGISTRY_DIR) {
     };
   }
 
-  const ranked = listEditors(registryDir)
+  const editors = listEditors(registryDir);
+
+  // An editor that named this pane was pointed here by hand, so it outranks
+  // ancestry entirely -- including the UNRELATED filter below, which would
+  // otherwise drop an editor sitting outside the agent's tree.
+  if (pane) {
+    const connected = editors.find((entry) => entry.pane && entry.pane === pane);
+    if (connected) return connected;
+  }
+
+  const ranked = editors
     .map((entry) => {
       const [bucket, dist] = rank(cwd, entry.cwd);
       return { entry, bucket, dist };

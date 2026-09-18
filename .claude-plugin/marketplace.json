@@ -1,0 +1,13 @@
+{
+  "name": "todo-ai",
+  "owner": {
+    "name": "tpabla"
+  },
+  "plugins": [
+    {
+      "name": "todo-ai-nvim",
+      "source": "./",
+      "description": "Neovim integration for Claude Code — open files, auto-reload buffers, diff review, and editor context via MCP"
+    }
+  ]
+}

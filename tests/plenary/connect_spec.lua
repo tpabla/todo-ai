@@ -86,6 +86,87 @@ describe("connect", function()
     vim.fn.delete(tmp, 'rf')
   end)
 
+  describe("editor registry entry", function()
+    local registry, tmp
+
+    before_each(function()
+      registry = require('todo-ai.registry')
+      tmp = vim.fn.tempname()
+      vim.fn.mkdir(tmp, 'p')
+      registry.REGISTRY_DIR = tmp
+    end)
+
+    after_each(function()
+      vim.fn.delete(tmp, 'rf')
+      init.state.attached = nil
+      init.state.tmux_pane = nil
+    end)
+
+    local function published()
+      local dir = tmp .. '/' .. vim.fn.getpid()
+      return vim.fn.json_decode(table.concat(vim.fn.readfile(dir .. '/editor.json'), '\n'))
+    end
+
+    it("records the attached pane so the agent resolves this editor", function()
+      -- Without this the link is one-way: the agent falls back to cwd
+      -- ancestry and may target a different nvim entirely.
+      init._join_pane('%7', nil)
+      assert.equals('%7', published().pane)
+    end)
+
+    it("clears the pane on disconnect", function()
+      init._join_pane('%7', nil)
+      init.disconnect()
+      assert.is_nil(published().pane)
+    end)
+
+    it("clears the pane when the attached pane is no longer an agent", function()
+      init._join_pane('%7', nil)
+      assert.is_nil(init.attached_pane({ candidates = function() return {} end }))
+      assert.is_nil(published().pane)
+    end)
+  end)
+
+  describe(":TodoAIConnect with no argument", function()
+    after_each(function()
+      init.state.attached = nil
+      init.state.tmux_pane = nil
+    end)
+
+    it("does not re-prompt while already connected", function()
+      init.state.attached = '%1'
+      init.state.tmux_pane = '%1'
+      local prompted = false
+      local result = init.connect(nil, {
+        candidates = function() return { { id = '%1', agent = 'claude', dir = '/proj' } } end,
+        select = function() prompted = true end,
+        spawn = function() prompted = true end,
+      })
+      assert.is_false(prompted)
+      assert.equals('%1', result)
+    end)
+
+    it("prompts when nothing is attached", function()
+      local prompted = false
+      init.connect(nil, {
+        candidates = function() return { { id = '%1', agent = 'claude', dir = '/proj' } } end,
+        select = function() prompted = true end,
+      })
+      assert.is_true(prompted)
+    end)
+
+    it("still always prompts via :TodoAI, even while attached", function()
+      init.state.attached = '%1'
+      init.state.tmux_pane = '%1'
+      local prompted = false
+      init.open_agent_interactive(nil, {
+        candidates = function() return { { id = '%1', agent = 'claude', dir = '/proj' } } end,
+        select = function() prompted = true end,
+      })
+      assert.is_true(prompted)
+    end)
+  end)
+
   describe("picker line", function()
     it("shows the session title with the agent's marker stripped", function()
       local line = init._describe_pane({
@@ -114,6 +195,18 @@ describe("connect", function()
       })
       local _, count = echoes_command:gsub('claude', '')
       assert.equals(1, count)
+    end)
+
+    it("flags a pane with no todo-ai integration loaded", function()
+      -- The tag comes from the plugin's own hook, so an untagged pane cannot
+      -- talk back to nvim however the user connects to it.
+      local line = init._describe_pane({ id = '%59', agent = 'claude', dir = '/proj' })
+      assert.is_true(line:find('no editor bridge', 1, true) ~= nil)
+
+      local bridged = init._describe_pane({
+        id = '%12', agent = 'claude', dir = '/proj', tagged = true,
+      })
+      assert.is_nil(bridged:find('no editor bridge', 1, true))
     end)
 
     it("still renders a pane with no title at all", function()
