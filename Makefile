@@ -1,22 +1,15 @@
-.PHONY: test test-lua test-mcp test-hooks test-plugin test-single lint dev install clean help
+.PHONY: test test-lua test-plugin test-single lint dev install clean help
 
-test: test-lua test-mcp test-hooks test-plugin ## Run all tests
+test: test-lua test-plugin ## Run all tests
 
 test-plugin: ## Validate plugin manifest JSON files
 	@python3 -c "import json; \
-		[json.load(open(f)) for f in ['.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', '.mcp.json', 'hooks/hooks.json', 'mcp-server/package.json']]; \
+		[json.load(open(f)) for f in ['.claude-plugin/plugin.json', '.claude-plugin/marketplace.json']]; \
 		print('  ok  plugin manifest JSON files are valid')"
-
-test-hooks: ## Run hook script tests
-	@bash hooks/test.sh
 
 test-lua: ## Run Lua tests
 	@nvim --headless -u tests/minimal_init.lua \
 		-c 'PlenaryBustedDirectory tests/plenary/ {minimal_init="tests/minimal_init.lua", sequential=true}'
-
-test-mcp: ## Run MCP server tests
-	@cd mcp-server && [ -d node_modules ] || npm install --silent
-	@cd mcp-server && node test.js
 
 test-single: ## Run one test (FILE=tests/plenary/xxx_spec.lua)
 	@nvim --headless -u tests/minimal_init.lua \
@@ -35,7 +28,7 @@ install: ## Install to Neovim packages directory
 	@echo "Installed"
 
 clean: ## Remove temp files
-	@rm -f /tmp/todo-ai-prompt.md /tmp/todo-ai.log
+	@rm -rf /tmp/todo-ai
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \

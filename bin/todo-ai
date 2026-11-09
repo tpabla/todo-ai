@@ -1,0 +1,4 @@
+#!/bin/sh
+# Drive the paired Neovim from an agent. Logic lives in lua/todo-ai/cli.lua.
+root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+exec nvim --clean -l "$root/lua/todo-ai/cli_main.lua" "$root" "$@"

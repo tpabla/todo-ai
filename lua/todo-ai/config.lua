@@ -1,27 +1,22 @@
 local M = {}
 
--- Harness identifiers (use these constants instead of string literals)
-M.HARNESS_PI = 'pi'
-M.HARNESS_CLAUDE_CODE = 'claude_code'
-
 M.defaults = {
-  harness = M.HARNESS_CLAUDE_CODE,
   tag = 'AGENT',
-  pane_width = 80,
 
-  -- "new" or "resume"; nil = harness default (pi → resume, claude_code → new)
-  session_mode = nil,
+  -- Agent started when <leader>tc finds none: a herdr agent kind, or the
+  -- command run in a new tmux pane
+  agent = 'claude',
+  split = 'right', -- 'right' or 'down'
 
-  -- Optional label for this editor, so an agent can be addressed by name
-  -- instead of a tmux pane id: :TodoAIConnect api
-  session_name = nil,
+  -- Foreground commands treated as agents when discovering tmux panes. herdr
+  -- detects agents itself and ignores this.
+  agent_commands = { 'claude', 'pi', 'codex', 'opencode', 'gemini', 'amp' },
 
-  -- Pi-specific
-  pi_extra_args = {},
+  -- Share of the window height taken by the slides split
+  slides_height = 0.4,
 
-  -- Claude Code-specific
-  claude_extra_args = {},
-  claude_model = nil,
+  -- How often attached buffers are re-read from disk while an agent edits them
+  reload_interval_ms = 1000,
 }
 
 M.config = {}

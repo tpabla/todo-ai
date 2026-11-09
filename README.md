@@ -1,86 +1,53 @@
 # todo-ai
 
-Neovim + an AI coding agent via tmux. The agent runs in its own tmux pane with full access to your editor state. It edits files directly; you review with [diffview.nvim](https://github.com/sindrets/diffview.nvim).
+Pair Neovim with any coding agent running beside it in [herdr](https://herdr.dev) or tmux. Send it code from your editor; let it open files, highlight ranges and walk you through code in your editor. Review its changes with [diffview.nvim](https://github.com/sindrets/diffview.nvim).
 
-**Two harnesses are supported** — pick one in your config:
-
-- **`claude_code`** (default) — [Claude Code CLI](https://claude.com/claude-code), wired up via a bundled Claude Code plugin (MCP server + hooks + skills)
-- **`pi`** — [pi coding agent](https://github.com/mariozechner/pi-coding-agent), wired up via the existing pi extension
+No harness-specific code: Claude Code, pi, codex or anything else works through one CLI and one skill.
 
 ## How it works
 
 ```
-┌─ tmux ──────────────────────────────────────────────┐
-│                                                      │
-│  Neovim (pane 1)              pi (pane 2)            │
-│  ┌──────────────────┐        ┌────────────────────┐  │
-│  │                  │        │                    │  │
-│  │ • current file   │───────►│ reads editor state │  │
-│  │ • cursor line    │        │ on every prompt    │  │
-│  │ • open buffers   │        │                    │  │
-│  │ • LSP diagnostics│◄───────│ opens files        │  │
-│  │                  │        │ triggers diffview  │  │
-│  │                  │◄───────│ reloads buffers    │  │
-│  │                  │        │                    │  │
-│  └──────────────────┘        └────────────────────┘  │
-│                                                      │
-└──────────────────────────────────────────────────────┘
+┌─ herdr tab / tmux window ──────────────────────────────────────────┐
+│                                                                    │
+│  Neovim                                agent (claude, pi, …)       │
+│  ┌─────────────────────────┐          ┌──────────────────────────┐ │
+│  │ <leader>ti  ask about   │ prompt   │                          │ │
+│  │   the selection         │─────────►│                          │ │
+│  │                         │          │ todo-ai context          │ │
+│  │ file, cursor, selection │◄─────────│ todo-ai open f.ts:12-30  │ │
+│  │ highlighted ranges      │   rpc    │ todo-ai diff             │ │
+│  │ buffers reload on edit  │          │                          │ │
+│  └─────────────────────────┘          └──────────────────────────┘ │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-`:TodoAI` opens the agent in a tmux split. Agent and Neovim are linked by **path ancestry**, not by an identical working directory — an agent at a project root pairs with a Neovim running inside a worktree beneath it. When agent panes already exist, `:TodoAI` asks which one to connect to rather than guessing; with none, it spawns one. Close Neovim and the agent shows disconnected (🔴); reopen and it goes 🟢. Multiple Neovim instances in different projects each get their own agent.
-
-## Requirements
-
-- **[tmux](https://github.com/tmux/tmux)** — Neovim must be running inside tmux
-- **[pi](https://github.com/mariozechner/pi-coding-agent)** — `npm i -g @mariozechner/pi-coding-agent`
-- **[diffview.nvim](https://github.com/sindrets/diffview.nvim)** — for reviewing changes
-- **[todo-comments.nvim](https://github.com/folke/todo-comments.nvim)** *(optional)* — adds telescope search and icons for `AGENT:` tags
-
-See **[INSTALL.md](INSTALL.md)** for detailed setup.
-
-## Quick start
-
-```lua
--- lazy.nvim
-{
-  "tpabla/todo-ai",
-  dependencies = { "sindrets/diffview.nvim" },
-  opts = {},
-}
-```
+`<leader>tc` attaches the editor to an agent in the same herdr workspace or tmux session, starting one if there is none. The agent's `todo-ai` command then always reaches that editor.
 
 ## Usage
 
 | Key | Command | Description |
 |-----|---------|-------------|
-| `<leader>tc` | `:TodoAI` | Connect to an agent pane (asks when any exist, spawns when none do) |
-| `<leader>tf` | `:TodoAIFocus` | Switch tmux focus to the connected agent's pane |
-| `<leader>ts` | `:TodoAIScan` | Find `AGENT:` comments, send them to the agent |
-| `<leader>ti` | `:TodoAIVisual` | Send visual selection to the agent |
-|              | `:TodoAIConnect [name\|%pane]` | Connect to a specific agent; no argument shows the picker |
-|              | `:TodoAIDisconnect` | Detach from the current agent pane |
-|              | `:TodoAINew` | Always spawn a new agent pane |
-|              | `:TodoAIResume <session-id>` | Spawn an agent resuming a specific past session |
-|              | `:TodoAIInstall` | Install the Claude Code plugin (MCP deps + register) |
+| `<leader>tc` | `:TodoAI` | Attach to an agent in this workspace/session; starts one if none |
+| `<leader>ti` | `:TodoAIVisual` | Ask the agent about the selected code |
+|              | `:TodoAISend {text}` | Send a prompt |
+| `<leader>tf` | `:TodoAIFocus` | Focus the attached agent |
+| `<leader>ts` | `:TodoAIScan` | Ask the agent to resolve every `AGENT:` comment |
 
-### Workflow
+Selecting code and asking about it from the agent's pane works too: the agent runs `todo-ai context` to read your selection.
 
-1. `:TodoAI` — pi opens in a tmux pane to the right, shows session selector
-2. Pick a previous session or start new
-3. Type your request in pi's TUI
-4. Pi reads files, makes edits, runs commands
-5. Pi opens relevant files in your editor and triggers diff review
-6. Switch back to Neovim, review with `:DiffviewOpen`, commit or revert
+### The `todo-ai` command
 
-### Context is always fresh
+```
+todo-ai context                 current file, cursor, last selection, buffers, diagnostics
+todo-ai open <path>[:a[-b]]     show a file, highlighting lines a..b
+todo-ai diff                    open the diff review
+todo-ai reload                  re-read changed buffers
+todo-ai which                   print the chosen editor and why
+```
 
-Open files, navigate code, trigger LSP between prompts — the extension queries Neovim for current file, cursor position, open buffers, and diagnostics fresh on every prompt.
+It finds the editor by, in order: the editor attached to this agent, the only editor in the agent's tab, then the nearest editor by directory, all within the agent's workspace/session. When that is ambiguous it fails and lists the candidates; run `:TodoAI` in the editor you want.
 
-### Visual mode
-
-Select code → `<leader>ti` → type instruction → pi processes it.
-
-### AGENT scanning
+### AGENT comments
 
 ```python
 # AGENT: add input validation
@@ -88,130 +55,21 @@ def process(data):
     return data.upper()
 ```
 
-`<leader>ts` or `:TodoAIScan` — finds all `AGENT:` comments across the project and sends them to pi for resolution. Also available as `/scan` in pi's pane.
-
-### Sessions & reconnection
-
-Pi manages sessions natively. `:TodoAI` passes `--resume` so you can pick up where you left off or start fresh, and `:TodoAIResume <session-id>` targets one specific past session (`--session` for pi, `--resume` for Claude Code).
-
-If agent panes are already running, `:TodoAI` lists them and asks which to connect to — it never picks silently, so you always know which session you attached to. Candidates are ranked: exact directory match, then the nearest agent *above* you (the project-root-plus-worktrees case), then one below, then unrelated panes last. Nothing is hidden.
-
-### Picker navigation
-
-The picker is `vim.ui.select`, so its keys come from whichever picker plugin you
-have. With **mini.pick** (what `require('mini.pick').setup()` installs as
-`vim.ui.select`):
-
-| Key | Action |
-|---|---|
-| type any text | fuzzy-filter the candidates |
-| `<C-n>` / `<C-p>` | next / previous match |
-| `<CR>` | connect to the highlighted pane |
-| `<Esc>` | cancel |
-
-`/` and `hjkl` are not available in a prompt-driven picker — printable keys go
-into the filter instead of moving the cursor. Remap movement via
-`MiniPick.config.mappings` if `<C-n>`/`<C-p>` is not to your taste. With no
-picker plugin installed you get Neovim's built-in numbered prompt.
-
-Each candidate line shows the agent's own session name, taken from the tmux
-pane title, so two agents in the same directory are distinguishable:
-
-```
-%59  claude  roku-migration-impl                ~/worktrees/projects/roku-migration  (unrelated)
-%71  claude  roku-migration-repository-pattern  ~/worktrees/projects/roku-migration  (unrelated)
-```
-
-To skip the picker, name the target: `:TodoAIConnect api` (matches `@todo-ai-name`), `:TodoAIConnect %7` (a tmux pane id), or a session id prefix. Give an editor a name with `session_name` in `setup()`.
-
-An agent started independently (not through `:TodoAI`) also works. It is discovered by its pane process even before it has tagged itself, and it finds Neovim by ancestry — so it does **not** need to be in the same directory as Neovim.
+`<leader>ts` asks the agent to resolve them all.
 
 ## Configuration
 
-Provider, model, and thinking are configured through pi directly — see [pi docs](https://github.com/mariozechner/pi-coding-agent). The settings below are todo-ai-specific:
-
 ```lua
 require("todo-ai").setup({
-  harness = "claude_code",       -- "claude_code" (default) | "pi"
-  tag = "AGENT",                 -- comment tag for scanning (AGENT:)
-  pane_width = 80,               -- tmux pane width in columns
-
-  -- Claude Code harness
-  claude_model = nil,            -- override model, e.g. "sonnet"
-  claude_extra_args = {},        -- extra CLI args passed to `claude`
-
-  -- Pi harness
-  pi_extra_args = {},            -- extra CLI args passed to `pi`
+  agent = "claude",          -- started when none exists: a herdr agent kind, or the tmux command
+  split = "right",           -- "right" | "down"
+  agent_commands = { "claude", "pi", "codex", "opencode", "gemini", "amp" }, -- tmux discovery
+  tag = "AGENT",
+  reload_interval_ms = 1000,
 })
 ```
 
-### Claude Code harness
-
-The Claude Code adapter ships as a Claude Code plugin in this repo, bundling:
-
-- **MCP server** (`mcp-server/`) exposing `neovim_open_file`, `neovim_diff_review`, `neovim_get_context`
-- **PostToolUse hook** (`hooks/post-edit.sh`) that calls `:checktime` after every Edit/Write
-- **`/scan` skill** (`skills/scan/`) for AGENT-tag resolution
-- **Workflow rules** (`rules/neovim-workflow.md`) telling Claude to fetch editor context per task
-
-**Setup is one command.** After lazy.nvim clones the repo, run:
-
-```vim
-:TodoAIInstall
-```
-
-That runs `npm install` in `mcp-server/` (skipped if `node_modules/` exists) and that's it. Nothing is written under `~/.claude/`.
-
-The plugin is loaded **in-place** every time `:TodoAI` launches `claude`, via `claude --plugin-dir <plugin_root>`. Edits to the plugin source are picked up on the next launch (or `/reload-plugins` inside `claude`). No copy, no marketplace registration, no global state.
-
-If you want the same plugin available when you run `claude` from a regular terminal (outside Neovim), alias it: `alias claude='claude --plugin-dir ~/.local/share/nvim/lazy/todo-ai'`.
-
-#### Auto-approve the Neovim MCP tools (optional)
-
-By default Claude Code will prompt for permission the first time it calls `neovim_open_file`, `neovim_diff_review`, or `neovim_get_context`. To skip those prompts, add this to `~/.claude/settings.json`:
-
-```json
-{
-  "permissions": {
-    "allow": ["mcp__plugin_todo-ai-nvim_neovim__*"]
-  }
-}
-```
-
-Plugin manifests don't yet support shipping permissions, so this is a one-time manual step.
-
-## What the extension does
-
-The [pi extension](extension/neovim.ts) (~280 lines of TypeScript):
-
-| Hook | What it does |
-|------|-------------|
-| Editor polling | Re-resolves the paired editor from the session registry. 🟢 when connected, 🔴 when not. |
-| `before_agent_start` | Queries editor state (file, cursor, buffers, diagnostics). Injects workflow rules. |
-| `neovim` tool | Opens files at specific lines and triggers `:DiffviewOpen`. |
-| `tool_execution_end` | Calls `:checktime` after edits so buffers reload. |
-| `/scan` command | Greps for `AGENT:` (uses `rg` if available) and sends matches to pi. |
-| Prompt polling | Watches for prompt files from Neovim (visual selection, scan). |
-
-## Project structure
-
-```
-todo-ai/
-├── lua/todo-ai/             # Neovim plugin (harness-agnostic)
-│   ├── init.lua             #   tmux pane management + remote functions
-│   ├── visual.lua           #   visual selection → prompt
-│   └── config.lua           #   configuration + harness constants
-├── plugin/todo-ai.vim       # Commands + keymaps
-├── extension/neovim.ts      # Pi adapter (pi extension)
-├── mcp-server/              # Claude Code adapter — MCP server (Node)
-├── hooks/                   # Claude Code adapter — Post/Submit hooks
-├── skills/scan/             # Claude Code adapter — /scan skill
-├── .claude-plugin/          # Claude Code plugin manifest
-├── .mcp.json                # MCP server registration
-├── tests/plenary/
-├── INSTALL.md
-└── Makefile
-```
+See **[INSTALL.md](INSTALL.md)** for setup.
 
 ## Development
 
@@ -219,8 +77,6 @@ todo-ai/
 make test                     Run tests
 make test-single FILE=...     Run one test file
 make lint                     Find dead Lua code
-make dev                      Symlink for development
-make install                  Install to Neovim packages
 ```
 
 ## License

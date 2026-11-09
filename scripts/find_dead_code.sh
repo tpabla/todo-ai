@@ -9,8 +9,8 @@ for file in lua/todo-ai/*.lua; do
   # Only check public functions (not prefixed with _)
   grep -o 'function M\.[a-zA-Z_]*' "$file" | sed 's/function M\.//' | while read -r func; do
     case "$func" in _*) continue ;; esac
-    count=$(grep -r --include='*.lua' --include='*.vim' --include='*.ts' \
-      "$func" lua/ plugin/ extension/ tests/ 2>/dev/null \
+    count=$(grep -r --include='*.lua' --include='*.vim' \
+      "$func" lua/ plugin/ tests/ 2>/dev/null \
       | grep -v "^${file}:" | grep -cv "^[[:space:]]*--")
     if [ "$count" -eq 0 ]; then
       echo "  DEAD: ${module}.${func}"
