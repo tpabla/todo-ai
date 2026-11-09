@@ -12,6 +12,14 @@ The user pairs with you from Neovim. `todo-ai` drives their editor.
 
 When walking through code, show one stop per turn: `open` the location with a range covering everything you are about to explain, explain it, then stop. Wait for the user to say to move on before opening the next stop. Never chain several `open` calls in one turn.
 
+## Diagrams
+
+Mermaid blocks render as colour-coded diagrams in the user's markdown. Colours are applied automatically: sequence participants, classes and states each get their own. In flowcharts, tag nodes by role so colour carries meaning:
+
+`:::user` people · `:::service` systems we own · `:::container` apps · `:::component` parts of an app · `:::store` databases, files, caches · `:::queue` events, async · `:::external` outside our control · `:::error` failures · `:::ok` success · `:::focus` the thing being explained
+
+C4 diagrams colour by element type (`Person`, `System`, `ContainerDb`, `System_Ext`, …) with no tagging. Always end a markdown file with text after its last diagram.
+
 If `todo-ai` reports more than one editor, tell the user to run `:TodoAI` in the editor they want.
 
 Never run `git commit` or any git write command. The user reviews the diff and commits.
