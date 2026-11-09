@@ -8,9 +8,10 @@ the editor talks to agents through the multiplexer.
 
 ### Components
 
-- **`bin/todo-ai`** — CLI agents run (`context`, `open`, `diff`, `reload`, `which`). A shell wrapper around `nvim -l`
-- **`lua/todo-ai/cli.lua`** — CLI logic: editor resolution, argument parsing, rpc to the editor
+- **`bin/todo-ai`** — CLI agents run (`context`, `open`, `diff`, `reload`, `slides`, `which`). A shell wrapper around `nvim -l`
+- **`lua/todo-ai/cli.lua`** — CLI logic: editor resolution, argument parsing, calls into the editor (child `nvim --remote-expr` with a deadline, so a stuck editor cannot hang an agent)
 - **`lua/todo-ai/init.lua`** — Attach/spawn/send/focus + `remote_*` functions the CLI calls
+- **`lua/todo-ai/slides.lua`** — Deck parsing and the slides split above the code window
 - **`lua/todo-ai/herdr.lua`**, **`tmux.lua`** — Multiplexer backends: `list`, `spawn`, `prompt`, `focus`, `location`
 - **`lua/todo-ai/visual.lua`** — Visual selection → prompt
 - **`lua/todo-ai/config.lua`** — Configuration

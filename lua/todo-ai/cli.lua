@@ -13,6 +13,8 @@ local M = {}
 
 M.ATTACH_DIR = '/tmp/todo-ai/agents'
 M.PROBE_TIMEOUT_MS = 1000
+-- Commands get longer than probes: opening a file can start language servers
+M.CALL_TIMEOUT_MS = 5000
 
 M.USAGE = [=[
 usage: todo-ai <command>
@@ -76,6 +78,7 @@ end
 --   sockets()            -> list of running nvim socket paths
 --   identity(sock)       -> { cwd, pane } or nil when the socket is dead
 --   location(pane)       -> { tab, workspace } or nil
+--   read_file(path)      -> list of lines, or nil when unreadable
 --   call(sock, fn, args) -> result of require('todo-ai')[fn](unpack(args))
 --   print(s), eprint(s)
 -- Returns { socket, how } or nil, err.
@@ -149,7 +152,20 @@ local commands = {
     end,
     -- Code paths resolved here, against the agent's cwd, like open's.
     slides = function(deps, sock, arg)
-        error('not implemented')
+        local deck = arg:sub(1, 1) == '/' and arg or vim.fs.joinpath(deps.cwd(), arg)
+        local lines = deps.read_file(deck)
+        if not lines then error('todo-ai: cannot read ' .. deck, 0) end
+
+        local slides = require('todo-ai.slides').parse(lines)
+        for i, slide in ipairs(slides) do
+            if slide.code then
+                local loc, err = M.parse_location(slide.code, deps.cwd())
+                if not loc then error(string.format('todo-ai: slide %d: %s', i, err), 0) end
+                slide.code = loc
+            end
+        end
+        deps.call(sock, 'remote_slides', { slides })
+        deps.print(string.format('showing %d slides from %s', #slides, deck))
     end,
     diff = function(deps, sock)
         deps.call(sock, 'remote_diff_review', {})
@@ -203,14 +219,26 @@ function M.run(argv, deps)
     return 0
 end
 
+-- Calls require('todo-ai')[fn](unpack(args)) in the editor from a child
+-- process with a deadline, for the same reason as the identity probe. Args and
+-- result cross as JSON inside a vim single-quoted string, where only ' needs
+-- escaping.
+local CALL = [=[luaeval('vim.json.encode({ require("todo-ai")[_A[1]](unpack(]=]
+    .. [=[vim.json.decode(_A[2], { luanil = { object = true, array = true } }))) })', [%s, %s])]=]
+
+local function vim_string(s)
+    return "'" .. s:gsub("'", "''") .. "'"
+end
+
 local function rpc(sock, fn, args)
-    local ch = vim.fn.sockconnect('pipe', sock, { rpc = true })
-    local ok, result = pcall(vim.rpcrequest, ch, 'nvim_exec_lua',
-        'local fn = ...; return require("todo-ai")[fn](select(2, ...))',
-        { fn, unpack(args) })
-    vim.fn.chanclose(ch)
-    if not ok then error(result, 0) end
-    return result
+    local expr = string.format(CALL, vim_string(fn), vim_string(vim.json.encode(args)))
+    local r = vim.system({ 'nvim', '--server', sock, '--remote-expr', expr }, { text = true })
+        :wait(M.CALL_TIMEOUT_MS)
+    if r.code ~= 0 or r.stdout == '' then
+        error(string.format('todo-ai: %s failed in the editor%s', fn,
+            r.code == 124 and ' (no answer, is it stuck at a prompt?)' or ': ' .. vim.trim(r.stderr .. r.stdout)), 0)
+    end
+    return vim.json.decode(r.stdout, { luanil = { object = true, array = true } })[1]
 end
 
 -- Default per-instance sockets: <run>/nvim.<pid>.0 on linux and
@@ -235,6 +263,10 @@ function M.default_deps()
             local sock = vim.trim(f:read('*a'))
             f:close()
             return sock ~= '' and sock or nil
+        end,
+        read_file = function(path)
+            local ok, lines = pcall(vim.fn.readfile, path)
+            return ok and lines or nil
         end,
         sockets = list_sockets,
         -- Probed from a child process with a deadline: rpcrequest cannot be
