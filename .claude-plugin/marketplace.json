@@ -7,7 +7,7 @@
     {
       "name": "todo-ai-nvim",
       "source": "./",
-      "description": "Neovim integration for Claude Code — open files, auto-reload buffers, diff review, and editor context via MCP"
+      "description": "Neovim integration for coding agents: open files, highlight ranges, read the selection, and diff review via the todo-ai CLI"
     }
   ]
 }

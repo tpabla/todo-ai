@@ -1,41 +1,18 @@
 local M = {}
 
 local config = require('todo-ai.config')
-local harness = require('todo-ai.harness')
-local paths = require('todo-ai.paths')
-local registry = require('todo-ai.registry')
+local cli = require('todo-ai.cli')
 
 M.state = {
-    tmux_pane = nil,
-    attached = nil, -- pane the user explicitly connected to
+    agent = nil, -- { id, kind, cwd, title } of the agent this editor talks to
+    reload_timer = nil,
 }
+
+M._ns = vim.api.nvim_create_namespace('todo-ai')
 
 local severity_map = {
     [1] = 'ERROR', [2] = 'WARN', [3] = 'INFO', [4] = 'HINT',
 }
-
-local function notify(msg, level)
-    vim.notify('[todo-ai] ' .. msg, level or vim.log.levels.INFO)
-end
-
--- Directory this nvim publishes itself into. Replaces the old
--- sha256(cwd) state dir, which could not pair an agent above nvim in the tree.
-function M._session_dir()
-    return registry.session_dir()
-end
-
-function M._publish()
-    return registry.publish({
-        socket = vim.v.servername,
-        cwd = paths.normalize(vim.fn.getcwd()),
-        pid = vim.fn.getpid(),
-        name = config.get('session_name'),
-        -- The pane the user explicitly connected to. Without it the agent can
-        -- only guess by cwd ancestry, and picks the wrong editor whenever
-        -- another nvim sits nearer -- or above -- it in the tree.
-        pane = M.state.attached,
-    })
-end
 
 function M.setup(opts)
     config.setup(opts or {})
@@ -62,364 +39,218 @@ function M.setup(opts)
         end,
     })
 
-    -- Publish so an agent anywhere in the tree can find this editor, and drop
-    -- entries left behind by editors that died without running VimLeavePre.
-    pcall(registry.list_editors)
-    M._publish()
-
     vim.api.nvim_create_autocmd('VimLeavePre', {
         group = group,
-        callback = function() registry.unpublish() end,
+        callback = function() M._detach() end,
     })
-
-    vim.defer_fn(function() M._check_install() end, 100)
 end
 
--- Tmux pane management --------------------------------------------------------
+-- Backend + side effects ------------------------------------------------------
 
-function M._in_tmux()
-    return os.getenv('TMUX') ~= nil
+-- herdr wins when both are present: herdr panes can run inside tmux.
+function M._backend(getenv)
+    getenv = getenv or os.getenv
+    if getenv('HERDR_ENV') == '1' then return require('todo-ai.herdr') end
+    if getenv('TMUX') then return require('todo-ai.tmux') end
+    error('todo-ai: run Neovim inside herdr or tmux', 0)
 end
 
-function M._read_file(path)
-    local f = io.open(path, 'r')
-    if not f then return nil end
-    local content = f:read('*a')
+-- deps is injectable so the flows are testable without herdr or tmux.
+function M._deps(overrides)
+    local deps = vim.tbl_extend('force', {
+        attach_dir = cli.ATTACH_DIR,
+        socket = function() return vim.v.servername end,
+        cwd = vim.fn.getcwd,
+        select = vim.ui.select,
+    }, overrides or {})
+    deps.backend = deps.backend or M._backend()
+    return deps
+end
+
+-- Attachment ------------------------------------------------------------------
+
+local function start_reload()
+    if M.state.reload_timer then return end
+    M.state.reload_timer = vim.uv.new_timer()
+    local every = config.get('reload_interval_ms')
+    M.state.reload_timer:start(every, every, vim.schedule_wrap(function()
+        vim.cmd('silent! checktime')
+    end))
+end
+
+local function stop_reload()
+    if not M.state.reload_timer then return end
+    M.state.reload_timer:close()
+    M.state.reload_timer = nil
+end
+
+-- Records this editor's socket under the agent's pane id so the agent's
+-- `todo-ai` resolves to exactly this editor.
+function M._attach(agent, deps)
+    deps = M._deps(deps)
+    if M.state.agent and M.state.agent.id ~= agent.id then M._detach(deps) end
+
+    vim.fn.mkdir(deps.attach_dir, 'p')
+    local f = assert(io.open(deps.attach_dir .. '/' .. agent.id, 'w'))
+    f:write(deps.socket())
     f:close()
-    local trimmed = content and vim.trim(content) or nil
-    return (trimmed and trimmed ~= '') and trimmed or nil
+
+    M.state.agent = agent
+    start_reload()
+    return agent
 end
 
-function M._require_tmux()
-    if not M._in_tmux() then
-        error('todo-ai requires tmux. Start Neovim inside a tmux session.')
+-- Needs no backend: it runs on exit, wherever nvim is.
+function M._detach(deps)
+    local agent = M.state.agent
+    M.state.agent = nil
+    stop_reload()
+    if not agent then return end
+
+    local dir = deps and deps.attach_dir or cli.ATTACH_DIR
+    local socket = deps and deps.socket and deps.socket() or vim.v.servername
+    local path = dir .. '/' .. agent.id
+    local f = io.open(path, 'r')
+    if not f then return end
+    local owner = f:read('*a')
+    f:close()
+    -- Another editor may have attached to this agent since
+    if owner == socket then os.remove(path) end
+end
+
+-- The attached agent, only while it is still alive.
+function M.attached(deps)
+    deps = M._deps(deps)
+    local agent = M.state.agent
+    if not agent then return nil end
+
+    for _, a in ipairs(deps.backend.list()) do
+        if a.id == agent.id then return a end
     end
-end
-
-function M._clear_pane()
-    M.state.tmux_pane = nil
-    M.state.attached = nil
-    os.remove(M._session_dir() .. '/prompt.md')
-    os.remove(M._session_dir() .. '/prompt.md.tmp')
-    M._publish()
-end
-
--- The attached pane id, but only while it is still a live agent pane. A pane
--- can close, or its agent can exit leaving a shell behind, between choosing it
--- and using it -- and send_keys into a shell would type the prompt at a prompt.
--- Derived from current state on every call rather than remembered.
-function M._attached_pane_info(overrides)
-    local pane_id = M.state.attached
-    if not pane_id then return nil end
-
-    for _, pane in ipairs(M._deps(overrides).candidates()) do
-        if pane.id == pane_id then
-            M.state.tmux_pane = pane_id
-            return pane
-        end
-    end
-
-    M._clear_pane()
+    M._detach(deps)
     return nil
 end
 
-function M.attached_pane(overrides)
-    local pane = M._attached_pane_info(overrides)
-    return pane and pane.id or nil
+function M._describe(agent)
+    local bits = { agent.id, agent.kind or 'agent' }
+    if agent.title and agent.title ~= '' then table.insert(bits, agent.title) end
+    if agent.cwd then table.insert(bits, vim.fn.fnamemodify(agent.cwd, ':~')) end
+    if agent.name then table.insert(bits, '[' .. agent.name .. ']') end
+    return table.concat(bits, '  ')
 end
 
-function M._is_pane_alive()
-    return M.attached_pane() ~= nil
-end
+-- Commands --------------------------------------------------------------------
 
-function M._plugin_root()
-    local source = debug.getinfo(1, 'S').source:sub(2)
-    return vim.fn.fnamemodify(source, ':h:h:h')
-end
+M.NEW_AGENT = 'New agent'
 
-function M._extension_path()
-    return M._plugin_root() .. '/extension/neovim.ts'
-end
-
--- Install state ---------------------------------------------------------------
-
-function M.install()
-    return harness.current().install(notify)
-end
-
-function M._check_install()
-    local ok, hint = harness.current().installed()
-    if not ok and hint then
-        notify(hint, vim.log.levels.WARN)
-    end
-end
-
--- Command construction --------------------------------------------------------
-
-function M._build_cmd(initial_prompt, session_mode, session_id)
-    return harness.current().build_cmd({
-        plugin_root = M._plugin_root(),
-        extension_path = M._extension_path(),
-        initial_prompt = initial_prompt,
-        session_mode = session_mode,
-        session_id = session_id,
-    })
-end
-
--- Prompt delivery -------------------------------------------------------------
-
-function M._write_prompt(text)
-    local dir = M._session_dir()
-    vim.fn.mkdir(dir, 'p')
-    local target = dir .. '/prompt.md'
-    local staging = target .. '.tmp'
-    local f = io.open(staging, 'w')
-    if not f then error('Failed to write ' .. staging) end
-    f:write(text)
-    f:close()
-    os.rename(staging, target)
-end
-
-function M._send_keys(pane_id, text)
-    pane_id = pane_id or M.state.tmux_pane
-    if not pane_id then return end
-    -- '-l' sends the text literally so special chars are not interpreted
-    vim.fn.system({ 'tmux', 'send-keys', '-t', pane_id, '-l', text })
-    vim.fn.system({ 'tmux', 'send-keys', '-t', pane_id, 'Enter' })
-end
-
--- Single delivery path for every harness; the mechanism comes from the spec.
-function M._deliver(text, pane_id, overrides)
-    if not text then return end
+-- :TodoAI — spawns when the workspace has no agents, otherwise always asks
+-- (offering a new one too), never silently picks. on_attached(agent) runs
+-- once an agent is attached.
+function M.pick(overrides, on_attached)
     local deps = M._deps(overrides)
-    return harness.deliver_prompt(harness.current(), pane_id or M.state.tmux_pane, text, {
-        send_keys = deps.send_keys,
-        write_prompt = deps.write_prompt,
-    })
-end
+    on_attached = on_attached or function(a)
+        vim.notify('[todo-ai] attached to ' .. M._describe(a))
+    end
+    local function attach(a) on_attached(M._attach(a, deps)) end
 
--- Attach / spawn --------------------------------------------------------------
-
-function M._join_pane(pane_id, initial_prompt)
-    M.state.tmux_pane = pane_id
-    M.state.attached = pane_id
-    M._publish()
-    M._deliver(initial_prompt, pane_id)
-    vim.fn.system({ 'tmux', 'select-pane', '-t', pane_id })
-    return pane_id
-end
-
-function M._spawn_agent(initial_prompt, session_mode, session_id)
-    local dir = M._publish()
-    local spec = harness.current()
-
-    if vim.fn.executable(spec.bin) ~= 1 then
-        error(string.format('todo-ai: %s not found on PATH', spec.bin))
+    local agents = deps.backend.list()
+    if #agents == 0 then
+        return attach(M._spawn(deps))
     end
 
-    local parts = {
-        'env',
-        'NVIM=' .. vim.v.servername,
-        'TODO_AI_SESSION_DIR=' .. dir,
-        'TODO_AI_SOCKET=' .. vim.v.servername,
-        'TODO_AI_TAG=' .. config.get('tag'),
-    }
-    local name = config.get('session_name')
-    if name then table.insert(parts, 'TODO_AI_NAME=' .. name) end
-
-    vim.list_extend(parts, M._build_cmd(initial_prompt, session_mode, session_id))
-    local shell_cmd = table.concat(vim.tbl_map(vim.fn.shellescape, parts), ' ')
-
-    local result = vim.trim(vim.fn.system({
-        'tmux', 'split-window', '-h', '-l', tostring(config.get('pane_width')),
-        '-P', '-F', '#{pane_id}',
-        shell_cmd,
-    }))
-    if vim.v.shell_error ~= 0 or not result:match('^%%') then
-        error('todo-ai: failed to create tmux pane: ' .. result)
-    end
-
-    M.state.tmux_pane = result
-    M.state.attached = result
-    M._publish()
-    return result
-end
-
--- Picker ----------------------------------------------------------------------
-
--- A pane title only helps when the agent set it. tmux defaults it to the
--- hostname, and it sometimes just echoes the running command.
-function M._session_title(pane)
-    local title = pane.title
-    if not title or title == '' then return nil end
-    if title == vim.fn.hostname() then return nil end
-    if pane.command and title == pane.command then return nil end
-    -- Strip the agent's own marker; the agent column already says who it is.
-    title = title:gsub('^%s*✳%s*', '')
-    title = vim.trim(title)
-    return (title ~= '') and title or nil
-end
-
-function M._describe_pane(pane)
-    local bits = { pane.agent or 'agent' }
-
-    local title = M._session_title(pane)
-    if title then table.insert(bits, title) end
-
-    table.insert(bits, pane.dir and vim.fn.fnamemodify(pane.dir, ':~') or '?')
-
-    if pane.name then table.insert(bits, '[' .. pane.name .. ']') end
-    if pane.rank and pane.rank ~= 'exact' then
-        table.insert(bits, '(' .. pane.rank .. ')')
-    end
-    -- An untagged pane is an agent with no todo-ai integration loaded: the
-    -- tag is written by the plugin's own hook. Prompts will reach it, but it
-    -- has no neovim_* tools to answer with.
-    if not pane.tagged then table.insert(bits, '(no editor bridge)') end
-
-    return string.format('%s  %s', pane.id, table.concat(bits, '  '))
-end
-
-M.NEW_SESSION = 'New session'
-
--- deps is injectable so the flow is testable without tmux.
-function M._deps(overrides)
-    return vim.tbl_extend('force', {
-        candidates = function() return registry.candidates(paths.normalize(vim.fn.getcwd())) end,
-        spawn = function(prompt) return M._spawn_agent(prompt, nil) end,
-        join = function(pane_id, prompt) return M._join_pane(pane_id, prompt) end,
-        select = function(items, opts, cb) vim.ui.select(items, opts, cb) end,
-        send_keys = function(pane, text) M._send_keys(pane, text) end,
-        write_prompt = function(text) M._write_prompt(text) end,
-    }, overrides or {})
-end
-
--- :TodoAI — spawn when there is nothing to attach to, otherwise always ask.
--- It never silently picks a pane for you.
-function M.open_agent_interactive(initial_prompt, overrides)
-    M._require_tmux()
-    local deps = M._deps(overrides)
-
-    local panes = deps.candidates()
-    if #panes == 0 then
-        return deps.spawn(initial_prompt)
-    end
-
-    local items = vim.list_extend(vim.deepcopy(panes), { M.NEW_SESSION })
+    local items = vim.list_extend(vim.deepcopy(agents), { M.NEW_AGENT })
     deps.select(items, {
         prompt = 'todo-ai: connect to',
         format_item = function(item)
-            if item == M.NEW_SESSION then return M.NEW_SESSION end
-            return M._describe_pane(item)
+            if item == M.NEW_AGENT then return M.NEW_AGENT end
+            return M._describe(item)
         end,
     }, function(choice)
         if not choice then return end
-        if choice == M.NEW_SESSION then
-            deps.spawn(initial_prompt)
-        else
-            deps.join(choice.id, initial_prompt)
-        end
+        attach(choice == M.NEW_AGENT and M._spawn(deps) or choice)
     end)
 end
 
--- Attach to an already-chosen pane, or ask. Used by everything that needs a
--- live agent (prompts, scan, focus).
-function M.open_agent(initial_prompt, overrides)
-    M._require_tmux()
-
-    local pane_id = M.attached_pane(overrides)
-    if pane_id then
-        M._deliver(initial_prompt, pane_id, overrides)
-        vim.fn.system({ 'tmux', 'select-pane', '-t', pane_id })
-        return pane_id
-    end
-
-    return M.open_agent_interactive(initial_prompt, overrides)
-end
-
--- :TodoAIConnect [name|%pane|session-id] — explicit attach. With no argument
--- it shows the picker; with one it matches a pane by name, id, or session.
-function M.connect(target, overrides)
-    M._require_tmux()
+-- :TodoAISend [text] — picks first when nothing is attached.
+function M.send(text, overrides)
+    if not text or text == '' then return end
     local deps = M._deps(overrides)
+    local function deliver(a) deps.backend.prompt(a.id, text) end
 
-    if not target or target == '' then
-        -- Re-running :TodoAIConnect while attached should confirm the link,
-        -- not make you pick the same pane again. Use :TodoAI to always choose.
-        local pane = M._attached_pane_info(overrides)
-        if pane then
-            notify('already connected to ' .. M._describe_pane(pane))
-            return pane.id
-        end
-        return M.open_agent_interactive(nil, overrides)
-    end
-
-    for _, pane in ipairs(deps.candidates()) do
-        if pane.id == target or pane.name == target or pane.session == target
-                or (pane.session and vim.startswith(pane.session, target)) then
-            notify('connected to ' .. M._describe_pane(pane))
-            return deps.join(pane.id, nil)
-        end
-    end
-
-    notify(string.format('no agent pane matching %q', target), vim.log.levels.WARN)
+    local agent = M.attached(deps)
+    if agent then return deliver(agent) end
+    M.pick(deps, deliver)
 end
 
-function M.disconnect()
-    local was = M.state.attached
-    M._clear_pane()
-    notify(was and ('detached from ' .. was) or 'not attached')
-end
-
-function M.open_agent_new(initial_prompt)
-    M._require_tmux()
-    return M._spawn_agent(initial_prompt, 'new')
-end
-
--- Resume a specific past session in a new pane.
-function M.resume_session(session_id, initial_prompt)
-    M._require_tmux()
-    if not session_id or session_id == '' then
-        error('todo-ai: a session id is required')
-    end
-    return M._spawn_agent(initial_prompt, nil, session_id)
-end
-
-function M.send_prompt(text, overrides)
-    local pane_id = M.attached_pane(overrides)
-    if pane_id then
-        return M._deliver(text, pane_id, overrides)
-    end
-    return M.open_agent(text, overrides)
+function M._spawn(deps)
+    return deps.backend.spawn({
+        kind = config.get('agent'),
+        cwd = deps.cwd(),
+        direction = config.get('split'),
+    })
 end
 
 function M.scan(overrides)
-    return M.send_prompt(harness.current().scan_prompt, overrides)
+    local tag = config.get('tag')
+    return M.send(string.format(
+        'Find every %s: comment in this project and resolve it, removing each comment once done.',
+        tag), overrides)
 end
 
-function M.focus_agent(overrides)
-    local pane_id = M.attached_pane(overrides)
-    if pane_id then
-        return vim.fn.system({ 'tmux', 'select-pane', '-t', pane_id })
-    end
-    return M.open_agent(nil, overrides)
+function M.focus(overrides)
+    local deps = M._deps(overrides)
+    local function focus(a) deps.backend.focus(a.id) end
+
+    local agent = M.attached(deps)
+    if agent then return focus(agent) end
+    M.pick(deps, focus)
 end
 
--- Remote functions (called by the agent via nvim --server) --------------------
+-- Prompt text for a selection plus the user's question.
+function M._selection_prompt(sel, question)
+    return string.format('In %s (lines %d-%d):\n```%s\n%s\n```\n\n%s',
+        sel.file, sel.start_line, sel.end_line, sel.filetype or '', sel.text, question)
+end
 
--- Paths arrive absolute: the agent may sit above this nvim in the tree, so
--- resolving a relative path against our cwd would silently open the wrong file.
-function M.remote_open(path, line)
-    local p = paths.normalize(path)
-    if not p or p:sub(1, 1) ~= '/' then
+-- Remote functions (called by `todo-ai` over rpc) -----------------------------
+
+-- { cwd, pane }: lets `todo-ai` place this editor in a tab and workspace.
+function M.remote_identity()
+    return {
+        cwd = vim.fn.getcwd(),
+        pane = os.getenv('HERDR_PANE_ID') or os.getenv('TMUX_PANE'),
+    }
+end
+
+-- Paths arrive absolute: the agent may sit in another directory, so resolving
+-- a relative path against our cwd would silently open the wrong file.
+function M.remote_open(path, first, last)
+    if type(path) ~= 'string' or path:sub(1, 1) ~= '/' then
         error(string.format(
-            'todo-ai: path must be absolute, got %q — the agent must resolve it ' ..
-            'against its own cwd before sending', tostring(path)))
+            'todo-ai: path must be absolute, got %q — resolve it against the ' ..
+            "agent's cwd before sending", tostring(path)))
     end
 
-    vim.schedule(function()
-        vim.cmd('edit +' .. (line or 1) .. ' ' .. vim.fn.fnameescape(p))
-    end)
+    vim.cmd('edit ' .. vim.fn.fnameescape(path))
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        vim.api.nvim_buf_clear_namespace(buf, M._ns, 0, -1)
+    end
+    if not first then return end
+
+    local count = vim.api.nvim_buf_line_count(0)
+    first = math.min(first, count)
+    last = math.min(last or first, count)
+    vim.api.nvim_win_set_cursor(0, { first, 0 })
+    vim.api.nvim_buf_set_extmark(0, M._ns, first - 1, 0, {
+        end_row = last,
+        hl_group = 'Visual',
+        hl_eol = true,
+    })
+    vim.cmd('normal! zz')
+end
+
+function M.remote_slides(slides)
+    error('not implemented')
 end
 
 function M.remote_diff_review()
@@ -428,8 +259,14 @@ function M.remote_diff_review()
     end)
 end
 
+function M.remote_reload()
+    vim.cmd('silent! checktime')
+end
+
+-- Includes the last visual selection of the current buffer, with its range so
+-- the agent can judge whether it is still what the user means.
 function M.remote_get_context()
-    local ctx = { open_files = {}, cwd = paths.normalize(vim.fn.getcwd()) }
+    local ctx = { cwd = vim.fn.getcwd(), open_files = {} }
 
     local win = vim.api.nvim_get_current_win()
     local buf = vim.api.nvim_win_get_buf(win)
@@ -437,6 +274,17 @@ function M.remote_get_context()
     if name ~= '' and vim.bo[buf].buftype == '' then
         ctx.current_file = name
         ctx.cursor_line = vim.api.nvim_win_get_cursor(win)[1]
+
+        local first = vim.api.nvim_buf_get_mark(buf, '<')[1]
+        local last = vim.api.nvim_buf_get_mark(buf, '>')[1]
+        if first > 0 and last >= first then
+            ctx.selection = {
+                start_line = first,
+                end_line = last,
+                text = table.concat(vim.api.nvim_buf_get_lines(buf, first - 1, last, false), '\n'),
+            }
+        end
+
         local diags = vim.diagnostic.get(buf)
         if #diags > 0 then
             ctx.diagnostics = {}
@@ -460,11 +308,7 @@ function M.remote_get_context()
         end
     end
 
-    return vim.fn.json_encode(ctx)
+    return ctx
 end
-
--- Backward-compatible aliases
-M.open_pi = M.open_agent
-M.focus_pi = M.focus_agent
 
 return M
