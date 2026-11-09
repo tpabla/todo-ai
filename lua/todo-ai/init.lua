@@ -249,8 +249,9 @@ function M.remote_open(path, first, last)
     vim.cmd('normal! zz')
 end
 
+-- Code paths arrive absolute, resolved by the CLI like remote_open's.
 function M.remote_slides(slides)
-    error('not implemented')
+    require('todo-ai.slides').show(slides, { height = config.get('slides_height') })
 end
 
 function M.remote_diff_review()

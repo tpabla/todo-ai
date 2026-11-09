@@ -11,6 +11,7 @@ local function world(opts)
     sockets = function() return opts.sockets or vim.tbl_keys(opts.editors or {}) end,
     identity = function(sock) return (opts.editors or {})[sock] end,
     location = function(pane) return (opts.locations or {})[pane] end,
+    read_file = function(path) return (opts.files or {})[path] end,
     call = function(sock, fn, args)
       table.insert(calls, { sock = sock, fn = fn, args = args })
       return (opts.returns or {})[fn]
@@ -284,5 +285,46 @@ describe("cli.run", function()
     assert.equals(1, cli.run({ 'diff' }, deps))
     assert.matches('no editor running', io.err[1])
     assert.equals(0, #io.calls)
+  end)
+end)
+
+describe("cli slides", function()
+  local editors = { ['/s/a'] = { cwd = '/w/app' } }
+
+  it("sends the deck with code paths resolved against the agent's cwd", function()
+    local deck = {
+      '# One', '<!-- code: src/a.lua:3-9 -->', '---',
+      '# Two', '---',
+      '# Three', '<!-- code: /abs/b.lua:4 -->',
+    }
+    local deps, io = world({ cwd = '/w/app', editors = editors, files = { ['/w/app/deck.md'] = deck } })
+    assert.equals(0, cli.run({ 'slides', 'deck.md' }, deps))
+    assert.equals('remote_slides', io.calls[1].fn)
+    assert.same({
+      { lines = { '# One' }, code = { path = '/w/app/src/a.lua', first = 3, last = 9 } },
+      { lines = { '# Two' } },
+      { lines = { '# Three' }, code = { path = '/abs/b.lua', first = 4, last = 4 } },
+    }, io.calls[1].args[1])
+  end)
+
+  it("exits 1 when the deck cannot be read", function()
+    local deps, io = world({ editors = editors, files = {} })
+    assert.equals(1, cli.run({ 'slides', 'missing.md' }, deps))
+    assert.matches('missing.md', io.err[1], 1, true)
+    assert.equals(0, #io.calls)
+  end)
+
+  it("exits 1 naming the slide with an invalid code range", function()
+    local deck = { '# One', '---', '# Two', '<!-- code: a.lua:30-12 -->' }
+    local deps, io = world({ cwd = '/w/app', editors = editors, files = { ['/w/app/deck.md'] = deck } })
+    assert.equals(1, cli.run({ 'slides', 'deck.md' }, deps))
+    assert.matches('slide 2', io.err[1], 1, true)
+    assert.equals(0, #io.calls)
+  end)
+
+  it("prints usage and exits 2 without a deck", function()
+    local deps, io = world({ editors = editors })
+    assert.equals(2, cli.run({ 'slides' }, deps))
+    assert.matches('usage', io.err[1])
   end)
 end)

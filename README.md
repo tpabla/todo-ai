@@ -42,8 +42,13 @@ todo-ai context                 current file, cursor, last selection, buffers, d
 todo-ai open <path>[:a[-b]]     show a file, highlighting lines a..b
 todo-ai diff                    open the diff review
 todo-ai reload                  re-read changed buffers
+todo-ai slides <deck.md>        show a deck above the code, each slide with its code
 todo-ai which                   print the chosen editor and why
 ```
+
+### Slides
+
+A deck is markdown with slides separated by `---`. A slide names the code to show beneath it with `<!-- code: path:12-30 -->`. `todo-ai slides deck.md` opens it in a split above your code window (`slides_height`, default 40%); `l`/`h` move between slides and `q` closes. Mermaid diagrams in slides render like in any markdown buffer.
 
 It finds the editor by, in order: the editor attached to this agent, the only editor in the agent's tab, then the nearest editor by directory, all within the agent's workspace/session. When that is ambiguous it fails and lists the candidates; run `:TodoAI` in the editor you want.
 
