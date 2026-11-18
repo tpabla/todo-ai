@@ -70,7 +70,7 @@ describe("tmux", function()
     local run, calls = runner('%9\n')
     local agent = tmux.spawn({ kind = 'claude', cwd = '/w/app', direction = 'right' }, run)
     assert.same({ 'tmux', 'split-window', '-h', '-t', '%2', '-c', '/w/app',
-      '-P', '-F', '#{pane_id}', 'claude' }, calls[1])
+      '-P', '-F', '#{pane_id}', 'exec claude' }, calls[1])
     assert.same({ id = '%9', kind = 'claude', cwd = '/w/app' }, agent)
 
     run, calls = runner('%9\n')
