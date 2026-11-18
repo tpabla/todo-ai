@@ -44,7 +44,9 @@ end
 function M.spawn(opts, run)
     local id = vim.trim((run or default_run)({ 'tmux', 'split-window',
         opts.direction == 'down' and '-v' or '-h', '-t', M.self_pane(), '-c', opts.cwd,
-        '-P', '-F', '#{pane_id}', opts.kind }))
+        -- exec so the pane's command is the agent, not the shell running it,
+        -- which is what list() matches on
+        '-P', '-F', '#{pane_id}', 'exec ' .. opts.kind }))
     return { id = id, kind = opts.kind, cwd = opts.cwd }
 end
 

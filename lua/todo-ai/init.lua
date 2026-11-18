@@ -145,11 +145,12 @@ M.NEW_AGENT = 'New agent'
 
 -- :TodoAI — spawns when the workspace has no agents, otherwise always asks
 -- (offering a new one too), never silently picks. on_attached(agent) runs
--- once an agent is attached.
+-- once an agent is attached; by default it focuses the agent.
 function M.pick(overrides, on_attached)
     local deps = M._deps(overrides)
     on_attached = on_attached or function(a)
         vim.notify('[todo-ai] attached to ' .. M._describe(a))
+        deps.backend.focus(a.id)
     end
     local function attach(a) on_attached(M._attach(a, deps)) end
 
